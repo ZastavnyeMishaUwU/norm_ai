@@ -6,11 +6,11 @@ from bot import TelegramBot
 
 
 async def health_server():
-    # Render дає PORT, Web Service хоче щоб ти його слухав
+
     port = int(os.getenv("PORT", "10000"))
 
     async def handle(reader: asyncio.StreamReader, writer: asyncio.StreamWriter):
-        # з'їдаємо запит (нам байдуже який)
+
         try:
             await reader.readline()
             while True:
