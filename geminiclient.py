@@ -42,10 +42,10 @@ class GeminiClient:
 
             config = {
                 "system_instruction": sys_inst,
-                # "generation_config": {
-                #     "max_output_tokens": int(max_output_tokens),
-                #     "temperature": float(temperature),
-                # },
+                "generation_config": {
+
+                    "temperature": 0.7,
+                },
             }
 
             resp = self.client.models.generate_content(
