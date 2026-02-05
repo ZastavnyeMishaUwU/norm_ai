@@ -1,15 +1,14 @@
-from google import genai
 import os
+from google import genai
 
 
 class GeminiClient:
     def __init__(self):
-        api_key = os.getenv("API_KEY") or os.getenv("GEMINI_API_KEY")
+        api_key = os.getenv("API_KEY")
         if not api_key:
-            raise RuntimeError("API_KEY (або GEMINI_API_KEY) не заданий в env/.env")
+            raise RuntimeError("ENV API_KEY is empty")
 
         self.client = genai.Client(api_key=api_key)
-        self.current_mode = "assistant"
         self.system_instructions = {}
         self.reload_instructions()
 
@@ -24,20 +23,22 @@ class GeminiClient:
                     path = os.path.join(instructions_dir, filename)
                     try:
                         with open(path, "r", encoding="utf-8") as f:
-                            self.system_instructions[mode_name] = f.read()
+                            self.system_instructions[mode_name] = f.read().strip()
                     except:
                         pass
-
-    def set_mode(self, mode: str) -> bool:
-        self.current_mode = mode
-        return mode in self.system_instructions
 
     def get_available_modes(self):
         return list(self.system_instructions.keys())
 
-    def ask(self, prompt: str, max_output_tokens: int = 420, temperature: float = 0.4) -> str:
+    def ask(
+        self,
+        prompt: str,
+        mode: str = "assistant",
+        max_output_tokens: int = 420,
+        temperature: float = 0.4,
+    ) -> str:
         try:
-            sys_inst = self.system_instructions.get(self.current_mode, "")
+            sys_inst = self.system_instructions.get(mode, "")
 
             config = {
                 "system_instruction": sys_inst,
@@ -47,15 +48,14 @@ class GeminiClient:
                 },
             }
 
-            response = self.client.models.generate_content(
+            resp = self.client.models.generate_content(
                 model="gemini-2.5-flash",
                 contents=prompt,
-                config=config
+                config=config,
             )
 
-            text = getattr(response, "text", None)
-            return text if text else "Порожня відповідь."
+            return resp.text if getattr(resp, "text", None) else "Порожня відповідь."
         except Exception as e:
             if "429" in str(e):
-                return "Ліміт вичерпано. Почекай трохи і спробуй ще раз."
-            return f"Помилка API: {str(e)}"
+                return "Ліміт вичерпано. Почекай і повтори."
+            return f"Помилка API: {e}"

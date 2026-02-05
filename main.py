@@ -1,38 +1,61 @@
 import asyncio
 import os
 
+from geminiclient import GeminiClient
+from bot import TelegramBot
 
-def load_dotenv_simple(path: str = ".env"):
-    if not os.path.exists(path):
-        return
-    try:
-        with open(path, "r", encoding="utf-8") as f:
-            for line in f:
-                line = line.strip()
-                if not line or line.startswith("#") or "=" not in line:
-                    continue
-                k, v = line.split("=", 1)
-                k = k.strip()
-                v = v.strip().strip('"').strip("'")
-                # не перетираємо якщо вже є в env
-                os.environ.setdefault(k, v)
-    except:
-        pass
+
+async def health_server():
+    # Render дає PORT, Web Service хоче щоб ти його слухав
+    port = int(os.getenv("PORT", "10000"))
+
+    async def handle(reader: asyncio.StreamReader, writer: asyncio.StreamWriter):
+        # з'їдаємо запит (нам байдуже який)
+        try:
+            await reader.readline()
+            while True:
+                line = await reader.readline()
+                if not line or line == b"\r\n":
+                    break
+        except:
+            pass
+
+        body = b"OK"
+        resp = (
+            b"HTTP/1.1 200 OK\r\n"
+            b"Content-Type: text/plain\r\n"
+            b"Content-Length: 2\r\n"
+            b"Connection: close\r\n"
+            b"\r\n"
+            + body
+        )
+        writer.write(resp)
+        await writer.drain()
+        writer.close()
+        try:
+            await writer.wait_closed()
+        except:
+            pass
+
+    server = await asyncio.start_server(handle, "0.0.0.0", port)
+    print(f"Health server on :{port}")
+    async with server:
+        await server.serve_forever()
 
 
 async def main():
-    load_dotenv_simple(".env")
-
-    from geminiclient import GeminiClient
-    from bot import TelegramBot
-
-    bot_token = os.getenv("BOT_TOKEN") or os.getenv("TG_BOT_TOKEN")
+    bot_token = os.getenv("BOT_TOKEN")
     if not bot_token:
-        raise RuntimeError("BOT_TOKEN (або TG_BOT_TOKEN) не заданий в env/.env")
+        raise RuntimeError("ENV BOT_TOKEN is empty")
 
-    ai_client = GeminiClient()
-    tg_bot = TelegramBot(ai_client, bot_token)
-    await tg_bot.start_polling()
+    client = GeminiClient()
+    tg_bot = TelegramBot(client, bot_token)
+
+    # одночасно: бот + порт для Render
+    await asyncio.gather(
+        tg_bot.start_polling(),
+        health_server(),
+    )
 
 
 if __name__ == "__main__":
