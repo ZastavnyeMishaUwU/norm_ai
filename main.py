@@ -6,11 +6,9 @@ from bot import TelegramBot
 
 
 async def health_server():
-
     port = int(os.getenv("PORT", "10000"))
 
     async def handle(reader: asyncio.StreamReader, writer: asyncio.StreamWriter):
-
         try:
             await reader.readline()
             while True:
@@ -47,11 +45,16 @@ async def main():
     bot_token = os.getenv("BOT_TOKEN")
     if not bot_token:
         raise RuntimeError("ENV BOT_TOKEN is empty")
+    
+    api_key = os.getenv("API_KEY")
+    if not api_key:
+        raise RuntimeError("ENV API_KEY is empty")
+
+    print("Запуск бота 12-го ліцею...")
 
     client = GeminiClient()
     tg_bot = TelegramBot(client, bot_token)
 
-    # одночасно: бот + порт для Render
     await asyncio.gather(
         tg_bot.start_polling(),
         health_server(),
