@@ -74,10 +74,15 @@ class TelegramBot:
     def load_schedule(self):
         try:
             with open(SCHEDULE_FILE, 'r', encoding='utf-8') as f:
-                return json.load(f)
+                data = json.load(f)
+                print(f"Завантажено розклад: {len(data.get('classes', []))} класів")
+                return data
         except FileNotFoundError:
             print(f"Файл {SCHEDULE_FILE} не знайдено!")
-            return None
+            return {"classes": [], "schedule": {}}
+        except json.JSONDecodeError as e:
+            print(f"Помилка читання JSON: {e}")
+            return {"classes": [], "schedule": {}}
 
     def load_admins(self):
         try:
@@ -88,6 +93,15 @@ class TelegramBot:
                     self.save_admins(data)
                 return data
         except FileNotFoundError:
+            default_admins = {
+                "admins": [1259974225],
+                "admin_passwords": {},
+                "current_password": "admin123"
+            }
+            self.save_admins(default_admins)
+            return default_admins
+        except json.JSONDecodeError:
+            print("Помилка читання admins.json, створюємо новий")
             default_admins = {
                 "admins": [1259974225],
                 "admin_passwords": {},
@@ -158,7 +172,10 @@ class TelegramBot:
 
     async def classes_inline_keyboard(self):
         builder = InlineKeyboardBuilder()
-        classes = self.schedule_data.get('classes', []) if self.schedule_data else []
+        classes = self.schedule_data.get('classes', [])
+        
+        if not classes:
+            return None
         
         for class_name in classes:
             builder.button(text=class_name, callback_data=f"class_{class_name}")
@@ -185,12 +202,20 @@ class TelegramBot:
         return builder.as_markup()
 
     def get_schedule_for_class_day(self, class_name, day_key):
-        if not self.schedule_data:
+        if not self.schedule_data or 'schedule' not in self.schedule_data:
             return "Розклад не знайдено"
         
         schedule_day = self.schedule_data['schedule'].get(day_key, [])
         if not schedule_day:
-            return f"На {day_key} розкладу немає"
+            days_map = {
+                'monday': 'Понеділок',
+                'tuesday': 'Вівторок',
+                'wednesday': 'Середа',
+                'thursday': 'Четвер',
+                'friday': "П'ятниця"
+            }
+            day_name = days_map.get(day_key, day_key)
+            return f"На {day_name} розкладу немає"
         
         days_map = {
             'monday': 'Понеділок',
@@ -203,8 +228,8 @@ class TelegramBot:
         result = f"Розклад для {class_name} ({days_map.get(day_key, day_key)}):\n\n"
         
         for lesson in schedule_day:
-            lesson_num = lesson['lesson_number']
-            class_info = lesson['classes'].get(class_name, {})
+            lesson_num = lesson.get('lesson_number', '?')
+            class_info = lesson.get('classes', {}).get(class_name, {})
             
             if class_info and class_info.get('subject'):
                 subject = class_info['subject']
@@ -217,7 +242,7 @@ class TelegramBot:
         return result
 
     def get_full_schedule_for_class(self, class_name):
-        if not self.schedule_data:
+        if not self.schedule_data or 'schedule' not in self.schedule_data:
             return "Розклад не знайдено"
         
         result = f"Повний розклад для {class_name}:\n\n"
@@ -236,8 +261,8 @@ class TelegramBot:
             
             if schedule_day:
                 for lesson in schedule_day:
-                    lesson_num = lesson['lesson_number']
-                    class_info = lesson['classes'].get(class_name, {})
+                    lesson_num = lesson.get('lesson_number', '?')
+                    class_info = lesson.get('classes', {}).get(class_name, {})
                     
                     if class_info and class_info.get('subject'):
                         subject = class_info['subject']
@@ -350,6 +375,10 @@ class TelegramBot:
             st = self.state(message.from_user.id)
             st["current_menu"] = "schedule"
             
+            if not self.schedule_data or not self.schedule_data.get('classes'):
+                await message.answer("Розклад не завантажено. Зверніться до адміністратора.", reply_markup=self.schedule_keyboard())
+                return
+            
             selected_info = ""
             if st["selected_class"]:
                 selected_info += f"Клас: {st['selected_class']}\n"
@@ -373,12 +402,19 @@ class TelegramBot:
             st = self.state(message.from_user.id)
             if st["current_menu"] == "schedule":
                 keyboard = await self.classes_inline_keyboard()
+                if not keyboard:
+                    await message.answer("Список класів не знайдено. Можливо, розклад не завантажено.", reply_markup=self.schedule_keyboard())
+                    return
                 await message.answer("Оберіть клас:", reply_markup=keyboard)
 
         @self.router.message(F.text == "Вибрати день")
         async def select_day_menu(message: Message):
             st = self.state(message.from_user.id)
             if st["current_menu"] == "schedule":
+                if not st["selected_class"]:
+                    await message.answer("Спочатку оберіть клас!", reply_markup=self.schedule_keyboard())
+                    return
+                
                 keyboard = await self.days_inline_keyboard()
                 await message.answer("Оберіть день тижня:", reply_markup=keyboard)
 
@@ -386,8 +422,11 @@ class TelegramBot:
         async def show_schedule(message: Message):
             st = self.state(message.from_user.id)
             if st["current_menu"] == "schedule":
-                if not st["selected_class"] or not st["selected_day"]:
-                    await message.answer("Спочатку оберіть клас і день!", reply_markup=self.schedule_keyboard())
+                if not st["selected_class"]:
+                    await message.answer("Спочатку оберіть клас!", reply_markup=self.schedule_keyboard())
+                    return
+                if not st["selected_day"]:
+                    await message.answer("Спочатку оберіть день!", reply_markup=self.schedule_keyboard())
                     return
                 
                 schedule_text = self.get_schedule_for_class_day(st["selected_class"], st["selected_day"])
@@ -402,8 +441,12 @@ class TelegramBot:
                     return
                 
                 schedule_text = self.get_full_schedule_for_class(st["selected_class"])
-                for chunk in split_chunks(schedule_text, 4000):
-                    await message.answer(chunk, parse_mode=ParseMode.MARKDOWN, reply_markup=self.schedule_keyboard())
+                if len(schedule_text) > 4000:
+                    parts = list(split_chunks(schedule_text, 4000))
+                    for i, part in enumerate(parts):
+                        await message.answer(part, parse_mode=ParseMode.MARKDOWN if i == 0 else None, reply_markup=self.schedule_keyboard())
+                else:
+                    await message.answer(schedule_text, parse_mode=ParseMode.MARKDOWN, reply_markup=self.schedule_keyboard())
 
         @self.router.callback_query(F.data.startswith("class_"))
         async def handle_class_selection(callback: CallbackQuery):
@@ -413,9 +456,13 @@ class TelegramBot:
             
             if st["current_menu"] == "schedule":
                 st["selected_class"] = class_name
-                await callback.message.edit_text(f"Обрано клас: {class_name}")
-                await callback.answer()
-                await callback.message.answer(f"Клас {class_name} обрано. Що робитимемо далі?", reply_markup=self.schedule_keyboard())
+                st["selected_day"] = None  # Скидаємо день при зміні класу
+                try:
+                    await callback.message.edit_text(f"Обрано клас: {class_name}")
+                except:
+                    pass  # Якщо не вдалося редагувати, продовжуємо
+                await callback.answer(f"Клас {class_name} обрано")
+                await callback.message.answer(f"Клас {class_name} обрано. Тепер оберіть день.", reply_markup=self.schedule_keyboard())
 
         @self.router.callback_query(F.data.startswith("day_"))
         async def handle_day_selection(callback: CallbackQuery):
@@ -424,6 +471,10 @@ class TelegramBot:
             st = self.state(user_id)
             
             if st["current_menu"] == "schedule":
+                if not st["selected_class"]:
+                    await callback.answer("Спочатку оберіть клас!")
+                    return
+                
                 days_map = {
                     'monday': 'Понеділок',
                     'tuesday': 'Вівторок',
@@ -433,13 +484,19 @@ class TelegramBot:
                 }
                 day_name = days_map.get(day_key, day_key)
                 st["selected_day"] = day_key
-                await callback.message.edit_text(f"Обрано день: {day_name}")
-                await callback.answer()
-                await callback.message.answer(f"День {day_name} обрано. Що робитимемо далі?", reply_markup=self.schedule_keyboard())
+                try:
+                    await callback.message.edit_text(f"Обрано день: {day_name}")
+                except:
+                    pass
+                await callback.answer(f"День {day_name} обрано")
+                await callback.message.answer(f"День {day_name} обрано. Тепер можете подивитись розклад.", reply_markup=self.schedule_keyboard())
 
         @self.router.callback_query(F.data == "back_to_schedule")
         async def back_to_schedule_menu(callback: CallbackQuery):
-            await callback.message.delete()
+            try:
+                await callback.message.delete()
+            except:
+                pass
             await callback.message.answer("Повертаємося до меню розкладу...", reply_markup=self.schedule_keyboard())
             await callback.answer()
 
@@ -502,7 +559,7 @@ class TelegramBot:
                     self.admins_data["admins"].append(user_id)
                     self.save_admins(self.admins_data)
                 
-                if user_id not in self.admins_data["admin_passwords"]:
+                if str(user_id) not in self.admins_data["admin_passwords"]:
                     self.admins_data["admin_passwords"][str(user_id)] = message.text
                     self.save_admins(self.admins_data)
                 
@@ -526,12 +583,15 @@ class TelegramBot:
         async def admin_stats(message: Message):
             st = self.state(message.from_user.id)
             if st["current_menu"] == "admin" and st["is_admin"]:
+                classes_count = len(self.schedule_data.get('classes', [])) if self.schedule_data else 0
+                days_count = len(self.schedule_data.get('schedule', {})) if self.schedule_data else 0
+                
                 stats_text = (
                     f"Статистика бота:\n"
                     f"• Користувачів: {len(self.user_state)}\n"
                     f"• Адміністраторів: {len(self.admins_data['admins'])}\n"
-                    f"• Класів у розкладі: {len(self.schedule_data.get('classes', [])) if self.schedule_data else 0}\n"
-                    f"• Днів у розкладі: {len(self.schedule_data.get('schedule', {})) if self.schedule_data else 0}\n"
+                    f"• Класів у розкладі: {classes_count}\n"
+                    f"• Днів у розкладі: {days_count}\n"
                     f"• Час сервера: {datetime.now().strftime('%Y-%m-%d %H:%M:%S')}\n"
                     f"• Поточний пароль: {self.admins_data['current_password']}"
                 )
@@ -560,8 +620,14 @@ class TelegramBot:
             if not st["awaiting_admin_id"]:
                 return
             
+            text = message.text.strip()
+            if text == "Скасувати":
+                st["awaiting_admin_id"] = False
+                await message.answer("Скасовано", reply_markup=self.admin_keyboard())
+                return
+            
             try:
-                new_admin_id = int(message.text.strip())
+                new_admin_id = int(text)
                 if new_admin_id in self.admins_data["admins"]:
                     await message.answer(f"Користувач з ID {new_admin_id} вже є адміністратором.")
                 else:
@@ -585,7 +651,11 @@ class TelegramBot:
                 admins_list = "\n".join([f"• {admin_id}" for admin_id in self.admins_data["admins"]])
                 await message.answer(
                     f"Список адміністраторів:\n{admins_list}\n\n"
-                    "Введіть ID адміністратора для видалення:"
+                    "Введіть ID адміністратора для видалення:",
+                    reply_markup=ReplyKeyboardMarkup(
+                        keyboard=[[KeyboardButton(text="Скасувати")]],
+                        resize_keyboard=True
+                    )
                 )
                 st["awaiting_admin_id"] = True
 
@@ -611,20 +681,25 @@ class TelegramBot:
             if not st["awaiting_new_password"]:
                 return
             
-            new_password = message.text.strip()
-            if len(new_password) < 4:
+            text = message.text.strip()
+            if text == "Скасувати":
+                st["awaiting_new_password"] = False
+                await message.answer("Скасовано", reply_markup=self.admin_keyboard())
+                return
+            
+            if len(text) < 4:
                 await message.answer("Пароль повинен містити щонайменше 4 символи!")
                 return
             
             old_password = self.admins_data["current_password"]
-            self.admins_data["current_password"] = new_password
+            self.admins_data["current_password"] = text
             self.save_admins(self.admins_data)
             
             st["awaiting_new_password"] = False
             await message.answer(
                 f"Пароль успішно змінено!\n"
                 f"Старий пароль: {old_password}\n"
-                f"Новий пароль: {new_password}",
+                f"Новий пароль: {text}",
                 reply_markup=self.admin_keyboard()
             )
 
@@ -647,7 +722,7 @@ class TelegramBot:
             st = self.state(message.from_user.id)
             if st["current_menu"] == "admin" and st["is_admin"]:
                 self.schedule_data = self.load_schedule()
-                if self.schedule_data:
+                if self.schedule_data and self.schedule_data.get('classes'):
                     await message.answer(
                         f"Розклад успішно оновлено!\n"
                         f"• Завантажено класів: {len(self.schedule_data.get('classes', []))}\n"
