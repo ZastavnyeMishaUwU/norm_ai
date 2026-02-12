@@ -4,7 +4,6 @@ import os
 from geminiclient import GeminiClient
 from bot import TelegramBot
 
-
 async def health_server():
     port = int(os.getenv("PORT", "10000"))
 
@@ -18,16 +17,7 @@ async def health_server():
         except:
             pass
 
-        body = b"OK"
-        resp = (
-            b"HTTP/1.1 200 OK\r\n"
-            b"Content-Type: text/plain\r\n"
-            b"Content-Length: 2\r\n"
-            b"Connection: close\r\n"
-            b"\r\n"
-            + body
-        )
-        writer.write(resp)
+        writer.write(b"HTTP/1.1 200 OK\r\nContent-Type: text/plain\r\nContent-Length: 2\r\nConnection: close\r\n\r\nOK")
         await writer.drain()
         writer.close()
         try:
@@ -36,22 +26,21 @@ async def health_server():
             pass
 
     server = await asyncio.start_server(handle, "0.0.0.0", port)
-    print(f"Health server on :{port}")
+    print(f"🌐 Health server: порт {port}")
     async with server:
         await server.serve_forever()
 
-
 async def main():
     bot_token = os.getenv("BOT_TOKEN")
-    if not bot_token:
-        raise RuntimeError("ENV BOT_TOKEN is empty")
-    
     api_key = os.getenv("API_KEY")
+    
+    if not bot_token:
+        raise RuntimeError("❌ BOT_TOKEN не знайдено")
     if not api_key:
-        raise RuntimeError("ENV API_KEY is empty")
+        raise RuntimeError("❌ API_KEY не знайдено")
 
-    print("Запуск бота 12-го ліцею...")
-
+    print("🚀 Запуск бота 12-го ліцею...")
+    
     client = GeminiClient()
     tg_bot = TelegramBot(client, bot_token)
 
@@ -59,7 +48,6 @@ async def main():
         tg_bot.start_polling(),
         health_server(),
     )
-
 
 if __name__ == "__main__":
     asyncio.run(main())

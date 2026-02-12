@@ -1,0 +1,26 @@
+{
+  "shift_1": {
+    "name": "І зміна",
+    "lessons": [
+      {"number": 1, "start": "08:00", "end": "08:35", "break": 10},
+      {"number": 2, "start": "08:45", "end": "09:20", "break": 10},
+      {"number": 3, "start": "09:30", "end": "10:05", "break": 10},
+      {"number": 4, "start": "10:15", "end": "10:50", "break": 10},
+      {"number": 5, "start": "11:00", "end": "11:35", "break": 15},
+      {"number": 6, "start": "11:50", "end": "12:25", "break": 10},
+      {"number": 7, "start": "12:35", "end": "13:10", "break": 15}
+    ]
+  },
+  "shift_2": {
+    "name": "ІІ зміна",
+    "lessons": [
+      {"number": 0, "start": "12:35", "end": "13:10", "break": 15},
+      {"number": 1, "start": "13:25", "end": "14:00", "break": 10},
+      {"number": 2, "start": "14:10", "end": "14:45", "break": 10},
+      {"number": 3, "start": "14:55", "end": "15:30", "break": 10},
+      {"number": 4, "start": "15:40", "end": "16:15", "break": 5},
+      {"number": 5, "start": "16:20", "end": "16:55", "break": 5},
+      {"number": 6, "start": "17:00", "end": "17:35", "break": 0}
+    ]
+  }
+}
