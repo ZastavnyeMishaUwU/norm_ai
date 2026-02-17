@@ -9,8 +9,7 @@ from aiogram.filters import Command
 from aiogram.types import Message, ReplyKeyboardMarkup, KeyboardButton, CallbackQuery, InlineKeyboardMarkup, InlineKeyboardButton
 
 from config import *
-from parser import ScheduleParser
-from utils import loading_animation, split_chunks
+from utils import loading_animation, split_chunks, safe_send
 from geminiclient import GeminiClient
 
 class TelegramBot:
@@ -23,28 +22,25 @@ class TelegramBot:
         self.user_locks = defaultdict(asyncio.Lock)
         self.user_state = {}
         
-        self.parser = ScheduleParser()
-        self.admins_data = self.load_admins()
+        self.schedule_data = self.load_json(SCHEDULE_FILE, {"classes": ALL_CLASSES, "schedule": {}})
+        self.bells_data = self.load_json(BELLS_FILE, {"shift_1": {}, "shift_2": {}})
+        self.admins_data = self.load_json(ADMINS_FILE, {"admins": [1259974225], "current_password": "admin123", "donors": []})
         self.donors = set(self.admins_data.get("donors", []))
         self.stats = STATS
         
         self.setup_handlers()
         self.dp.include_router(self.router)
-    
-    def load_admins(self):
+
+    def load_json(self, filename, default):
         try:
-            with open(ADMINS_FILE, 'r', encoding='utf-8') as f:
+            with open(filename, 'r', encoding='utf-8') as f:
                 return json.load(f)
         except:
-            return {
-                "admins": [1259974225],
-                "current_password": "admin123",
-                "donors": []
-            }
-    
+            return default
+
     def is_donor(self, user_id: int):
-        return user_id in self.donors or user_id in self.stats.donors
-    
+        return user_id in self.donors
+
     def state(self, user_id: int):
         if user_id not in self.user_state:
             is_admin = user_id in self.admins_data.get("admins", [])
@@ -53,19 +49,16 @@ class TelegramBot:
             self.user_state[user_id] = {
                 "mode": "assistant",
                 "detail_next": False,
-                "pending_detail_q": None,
                 "current_menu": "main",
                 "selected_class": None,
                 "selected_day": None,
-                "selected_shift": None,
                 "is_admin": is_admin,
                 "is_donor": is_donor,
                 "awaiting_password": False,
                 "awaiting_broadcast": False,
-                "donate_clicked": False,
+                "awaiting_new_password": False,
                 "first_seen": datetime.now(),
-                "last_active": datetime.now(),
-                "donate_hidden": is_donor
+                "last_active": datetime.now()
             }
             
             self.stats.total_users += 1
@@ -77,42 +70,142 @@ class TelegramBot:
         self.stats.active_today = len(self.stats.daily_active)
         
         return self.user_state[user_id]
-    
+
+    def get_shift_for_class(self, class_name):
+        if not class_name:
+            return 1
+        if class_name in SHIFT_1_CLASSES:
+            return 1
+        elif class_name in SHIFT_2_CLASSES:
+            return 2
+        return 1
+
+    def format_bells_schedule(self, shift=1):
+        bells = self.bells_data.get(f'shift_{shift}', {})
+        if not bells or not bells.get('lessons'):
+            return f"{BELL_ICON} Розклад дзвінків не знайдено"
+        
+        result = f"{BELL_ICON} {bells.get('name', f'{shift} зміна')}\n\n"
+        for lesson in bells.get('lessons', []):
+            num = lesson.get('number', '?')
+            start = lesson.get('start', '--:--')
+            end = lesson.get('end', '--:--')
+            break_time = lesson.get('break', 0)
+            
+            if num == 0:
+                result += f"0. {start}–{end} (підготовчий)\n"
+            else:
+                result += f"{num}. {start}–{end}\n"
+            if break_time > 0 and num not in [0, 6, 7]:
+                result += f"   └ перерва {break_time} хв\n"
+        return result
+
+    def get_schedule_for_class_day(self, class_name, day_key):
+        if not class_name or not day_key:
+            return "❌ Помилка: не вибрано клас або день"
+        
+        schedule_day = self.schedule_data.get('schedule', {}).get(day_key, [])
+        if not schedule_day:
+            day_name = DAYS_UA_REVERSE.get(day_key, day_key)
+            return f"📭 На {day_name} розкладу немає"
+        
+        shift = self.get_shift_for_class(class_name)
+        shift_text = f" ({SHIFTS[str(shift)]})" if shift else ""
+        day_name = DAYS_UA_REVERSE.get(day_key, day_key)
+        
+        result = f"{SCHEDULE_ICON} {class_name} — {day_name}{shift_text}\n\n"
+        
+        found = False
+        for lesson in schedule_day:
+            lesson_num = lesson.get('lesson_number')
+            class_info = lesson.get('classes', {}).get(class_name, {})
+            
+            if class_info and class_info.get('subject'):
+                subject = class_info['subject']
+                room = class_info.get('room', '')
+                room_str = f" (каб. {room})" if room else ""
+                result += f"{lesson_num}. {subject}{room_str}\n"
+                found = True
+        
+        if not found:
+            result += "Немає уроків\n"
+        
+        return result
+
+    def get_full_schedule_for_class(self, class_name):
+        if not class_name:
+            return "❌ Помилка: не вибрано клас"
+        
+        shift = self.get_shift_for_class(class_name)
+        shift_text = f" ({SHIFTS[str(shift)]})" if shift else ""
+        
+        result = f"{SCHEDULE_ICON} Повний розклад — {class_name}{shift_text}\n\n"
+        
+        for day_key, day_name in DAYS_UA.items():
+            result += f"——— {day_name} ———\n"
+            schedule_day = self.schedule_data.get('schedule', {}).get(day_key, [])
+            
+            found = False
+            for lesson in schedule_day:
+                lesson_num = lesson.get('lesson_number')
+                class_info = lesson.get('classes', {}).get(class_name, {})
+                
+                if class_info and class_info.get('subject'):
+                    subject = class_info['subject']
+                    room = class_info.get('room', '')
+                    room_str = f" (каб. {room})" if room else ""
+                    result += f"  {lesson_num}. {subject}{room_str}\n"
+                    found = True
+            
+            if not found:
+                result += "  Немає уроків\n"
+            result += "\n"
+        
+        return result
+
+    def get_schedule_for_today(self, class_name):
+        today = datetime.now().weekday()
+        days_map = {0: "monday", 1: "tuesday", 2: "wednesday", 
+                   3: "thursday", 4: "friday", 5: "monday", 6: "monday"}
+        day_key = days_map[today]
+        day_name = DAYS_UA_REVERSE.get(day_key, "")
+        schedule = self.get_schedule_for_class_day(class_name, day_key)
+        return schedule.replace(f"{day_name}", f"СЬОГОДНІ ({day_name})")
+
+    def get_schedule_for_tomorrow(self, class_name):
+        tomorrow = (datetime.now().weekday() + 1) % 7
+        days_map = {0: "monday", 1: "tuesday", 2: "wednesday", 
+                   3: "thursday", 4: "friday", 5: "monday", 6: "monday"}
+        day_key = days_map[tomorrow]
+        day_name = DAYS_UA_REVERSE.get(day_key, "")
+        schedule = self.get_schedule_for_class_day(class_name, day_key)
+        return schedule.replace(f"{day_name}", f"ЗАВТРА ({day_name})")
+
     def main_keyboard(self, user_id=None):
         st = self.state(user_id) if user_id else None
-        show_donate = st and not st.get("is_donor", False) and not st.get("donate_hidden", False)
+        show_donate = st and not st.get("is_donor", False)
         
         keyboard = [
             [KeyboardButton(text=f"{AI_ICON} AI Помічник"), 
              KeyboardButton(text=f"{SCHEDULE_ICON} Розклад")]
         ]
         
-        row2 = []
+        row2 = [KeyboardButton(text=f"{BELL_ICON} Дзвінки")]
         if show_donate:
             row2.append(KeyboardButton(text=f"{DONATE_ICON} Підтримати"))
-        row2.append(KeyboardButton(text=f"{BELL_ICON} Дзвінки"))
         keyboard.append(row2)
         
         return ReplyKeyboardMarkup(keyboard=keyboard, resize_keyboard=True)
-    
+
     def ai_keyboard(self, user_id=None):
-        st = self.state(user_id) if user_id else None
-        show_donate = st and not st.get("is_donor", False)
-        
-        keyboard = [
-            [KeyboardButton(text="Асистент"), KeyboardButton(text="Програміст")],
-            [KeyboardButton(text="Детально (1 раз)"), KeyboardButton(text="Режими")],
-            [KeyboardButton(text="Очистити")]
-        ]
-        
-        row3 = []
-        if show_donate:
-            row3.append(KeyboardButton(text=f"{DONATE_ICON} Підтримати"))
-        row3.append(KeyboardButton(text=f"{MENU_ICON} Головне меню"))
-        keyboard.append(row3)
-        
+        modes = self.client.get_available_modes()
+        keyboard = []
+        for mode in modes:
+            keyboard.append([KeyboardButton(text=mode)])
+        keyboard.append([KeyboardButton(text="Детально"), KeyboardButton(text="Очистити")])
+        keyboard.append([KeyboardButton(text=f"{MENU_ICON} Головне меню")])
         return ReplyKeyboardMarkup(keyboard=keyboard, resize_keyboard=True)
-    
+
     def schedule_main_keyboard(self, user_id=None):
         st = self.state(user_id) if user_id else None
         show_donate = st and not st.get("is_donor", False)
@@ -123,26 +216,22 @@ class TelegramBot:
             [KeyboardButton(text=f"{BELL_ICON} Дзвінки")]
         ]
         
-        row4 = []
+        row4 = [KeyboardButton(text=f"{MENU_ICON} Головне меню")]
         if show_donate:
-            row4.append(KeyboardButton(text=f"{DONATE_ICON} Підтримати"))
-        row4.append(KeyboardButton(text=f"{MENU_ICON} Головне меню"))
+            row4.insert(0, KeyboardButton(text=f"{DONATE_ICON} Підтримати"))
         keyboard.append(row4)
         
         return ReplyKeyboardMarkup(keyboard=keyboard, resize_keyboard=True)
-    
+
     def classes_keyboard(self, user_id=None):
-        classes = self.parser.get_classes()
-        if not classes:
-            return None
-        
+        classes = ALL_CLASSES
         st = self.state(user_id) if user_id else None
         show_donate = st and not st.get("is_donor", False)
         
         keyboard = []
         row = []
         
-        for i, class_name in enumerate(classes, 1):
+        for i, class_name in enumerate(sorted(classes), 1):
             row.append(KeyboardButton(text=f"{CLASS_ICON}{class_name}"))
             if i % 4 == 0:
                 keyboard.append(row)
@@ -150,18 +239,16 @@ class TelegramBot:
         if row:
             keyboard.append(row)
         
-        row_last = []
+        row_last = [KeyboardButton(text=f"{BACK_ICON} Назад")]
         if show_donate:
-            row_last.append(KeyboardButton(text=f"{DONATE_ICON} Підтримати"))
-        row_last.append(KeyboardButton(text=f"{BACK_ICON} Назад"))
+            row_last.insert(0, KeyboardButton(text=f"{DONATE_ICON} Підтримати"))
         keyboard.append(row_last)
         
         return ReplyKeyboardMarkup(keyboard=keyboard, resize_keyboard=True)
-    
+
     def days_keyboard(self, class_name, user_id=None):
         st = self.state(user_id) if user_id else None
         show_donate = st and not st.get("is_donor", False)
-        shift = self.parser.get_shift_for_class(class_name)
         
         keyboard = [
             [KeyboardButton(text=f"{DAY_ICON} Понеділок"), 
@@ -171,14 +258,13 @@ class TelegramBot:
             [KeyboardButton(text=f"{DAY_ICON} П'ятниця")]
         ]
         
-        row3 = []
+        row3 = [KeyboardButton(text=f"{BACK_ICON} Інший клас")]
         if show_donate:
-            row3.append(KeyboardButton(text=f"{DONATE_ICON} Підтримати"))
-        row3.append(KeyboardButton(text=f"{BACK_ICON} Інший клас"))
+            row3.insert(0, KeyboardButton(text=f"{DONATE_ICON} Підтримати"))
         keyboard.append(row3)
         
         return ReplyKeyboardMarkup(keyboard=keyboard, resize_keyboard=True)
-    
+
     def schedule_result_keyboard(self, user_id=None):
         st = self.state(user_id) if user_id else None
         show_donate = st and not st.get("is_donor", False)
@@ -192,37 +278,50 @@ class TelegramBot:
              KeyboardButton(text=f"{BELL_ICON} Дзвінки")]
         ]
         
-        row4 = []
+        row4 = [KeyboardButton(text=f"{MENU_ICON} Головне меню")]
         if show_donate:
-            row4.append(KeyboardButton(text=f"{DONATE_ICON} Підтримати"))
-        row4.append(KeyboardButton(text=f"{MENU_ICON} Головне меню"))
+            row4.insert(0, KeyboardButton(text=f"{DONATE_ICON} Підтримати"))
         keyboard.append(row4)
         
         return ReplyKeyboardMarkup(keyboard=keyboard, resize_keyboard=True)
-    
+
     def admin_keyboard(self):
         return ReplyKeyboardMarkup(
             keyboard=[
-                [KeyboardButton(text="📊 Статистика реального часу")],
-                [KeyboardButton(text="🔄 Оновити розклад")],
+                [KeyboardButton(text="📊 Статистика")],
                 [KeyboardButton(text="🔑 Змінити пароль")],
                 [KeyboardButton(text="📢 Розсилка"), 
-                 KeyboardButton(text="👥 Активні користувачі")],
+                 KeyboardButton(text="👥 Активні")],
+                [KeyboardButton(text="🤖 Керування режимами")],
                 [KeyboardButton(text=f"{MENU_ICON} Головне меню")]
             ],
             resize_keyboard=True
         )
-    
+
+    def ai_management_keyboard(self):
+        return ReplyKeyboardMarkup(
+            keyboard=[
+                [KeyboardButton(text="📋 Список режимів")],
+                [KeyboardButton(text="➕ Додати режим"), KeyboardButton(text="❌ Видалити режим")],
+                [KeyboardButton(text="🔙 Назад до адмінки")]
+            ],
+            resize_keyboard=True
+        )
+
+    def cancel_keyboard(self):
+        return ReplyKeyboardMarkup(
+            keyboard=[[KeyboardButton(text="❌ Скасувати")]],
+            resize_keyboard=True
+        )
+
     def donate_keyboard(self):
-        keyboard = InlineKeyboardMarkup(
+        return InlineKeyboardMarkup(
             inline_keyboard=[
-                [InlineKeyboardButton(text=f"{DONATE_ICON} Підтримати бота (Monobank)", url=MONOBANK_URL)],
-                [InlineKeyboardButton(text="✅ Я задонатив", callback_data="donate_done")],
-                [InlineKeyboardButton(text="❌ Сховати назавжди", callback_data="donate_hide")]
+                [InlineKeyboardButton(text=f"{DONATE_ICON} Підтримати", url=MONOBANK_URL)],
+                [InlineKeyboardButton(text="✅ Я задонатив", callback_data="donate_done")]
             ]
         )
-        return keyboard
-    
+
     def setup_handlers(self):
         
         @self.router.message(Command("start"))
@@ -233,7 +332,6 @@ class TelegramBot:
             st.update({
                 "mode": "assistant",
                 "detail_next": False,
-                "pending_detail_q": None,
                 "current_menu": "main",
                 "selected_class": None,
                 "selected_day": None
@@ -242,56 +340,82 @@ class TelegramBot:
             self.stats.commands_used += 1
             
             welcome_text = (
-                f"{MENU_ICON} *Вітаю в боті 12-го ліцею!*\n\n"
-                f"{AI_ICON} *AI Помічник* — відповіді на питання\n"
-                f"{SCHEDULE_ICON} *Розклад* — 1-11 класи, 2 зміни\n"
-                f"{BELL_ICON} *Дзвінки* — розклад уроків\n"
-                f"{DONATE_ICON} *Підтримка* — допомогти проекту\n\n"
+                f"{MENU_ICON} Вітаю в боті 12-го ліцею!\n\n"
+                f"{AI_ICON} AI Помічник\n"
+                f"{SCHEDULE_ICON} Розклад (1-11 класи)\n"
+                f"{BELL_ICON} Розклад дзвінків\n"
+                f"{DONATE_ICON} Підтримка проекту\n\n"
+                f"Оберіть опцію в меню:"
             )
             
-            if st.get("is_donor"):
-                welcome_text += f"{DONOR_ICON} *Дякуємо за підтримку!*"
+            if st.get("is_admin"):
+                welcome_text += f"\n\n{ADMIN_ICON} Ви адмін. Використовуйте /admin"
             
-            await message.answer(welcome_text, parse_mode=ParseMode.MARKDOWN, reply_markup=self.main_keyboard(user_id))
-        
+            if st.get("is_donor"):
+                welcome_text += f"\n\n{DONOR_ICON} Дякуємо за підтримку!"
+            
+            await safe_send(message, welcome_text, self.main_keyboard(user_id))
+
         @self.router.message(Command("admin"))
-        async def admin_panel_cmd(message: Message):
+        async def admin_cmd(message: Message):
             user_id = message.from_user.id
             st = self.state(user_id)
             
             if st["is_admin"]:
                 st["current_menu"] = "admin"
-                await message.answer(
-                    f"{ADMIN_ICON} *Адмін-панель*\n\n"
-                    f"📊 Статистика реального часу\n"
-                    f"🔄 Оновити розклад\n"
+                await safe_send(
+                    message,
+                    f"{ADMIN_ICON} Адмін-панель\n\n"
+                    f"📊 Статистика\n"
                     f"🔑 Змінити пароль\n"
                     f"📢 Розсилка\n"
-                    f"👥 Активні користувачі\n\n"
-                    f"_Адміни додаються тільки через JSON-файл_",
-                    parse_mode=ParseMode.MARKDOWN,
-                    reply_markup=self.admin_keyboard()
+                    f"👥 Активні\n"
+                    f"🤖 Керування режимами",
+                    self.admin_keyboard()
                 )
             else:
                 st["awaiting_password"] = True
-                await message.answer(
-                    f"{ADMIN_ICON} *Авторизація*\n\nВведіть пароль:",
-                    parse_mode=ParseMode.MARKDOWN,
-                    reply_markup=ReplyKeyboardMarkup(
-                        keyboard=[[KeyboardButton(text="❌ Скасувати")]],
-                        resize_keyboard=True
-                    )
+                await safe_send(message, f"{ADMIN_ICON} Введіть пароль:", self.cancel_keyboard())
+
+        @self.router.message(Command("learn"))
+        async def learn_cmd(message: Message):
+            user_id = message.from_user.id
+            st = self.state(user_id)
+            
+            if not st["is_admin"]:
+                await safe_send(message, "❌ Тільки для адмінів")
+                return
+            
+            parts = message.text.split(" ", 2)
+            if len(parts) < 3:
+                await safe_send(message, "Формат: /learn назва інструкція")
+                return
+            
+            mode_name = parts[1].lower()
+            instruction = parts[2]
+            
+            if self.client.add_mode(mode_name, instruction):
+                await safe_send(
+                    message,
+                    f"✅ Режим *{mode_name}* додано!\n\n"
+                    f"Тепер він доступний в AI меню.",
+                    parse_mode=ParseMode.MARKDOWN
                 )
-        
+            else:
+                await safe_send(message, "❌ Помилка додавання")
+
         @self.router.message(F.text == "❌ Скасувати")
         async def cancel_action(message: Message):
             user_id = message.from_user.id
             st = self.state(user_id)
-            st["awaiting_password"] = False
-            st["awaiting_broadcast"] = False
-            await message.answer(f"{MENU_ICON} Скасовано", reply_markup=self.main_keyboard(user_id))
-        
-        @self.router.message(lambda message: self.state(message.from_user.id)["awaiting_password"] and message.text != "❌ Скасувати")
+            st.update({
+                "awaiting_password": False,
+                "awaiting_broadcast": False,
+                "awaiting_new_password": False
+            })
+            await safe_send(message, f"{MENU_ICON} Скасовано", self.main_keyboard(user_id))
+
+        @self.router.message(lambda m: self.state(m.from_user.id)["awaiting_password"])
         async def handle_password(message: Message):
             user_id = message.from_user.id
             st = self.state(user_id)
@@ -304,138 +428,129 @@ class TelegramBot:
             if message.text == self.admins_data["current_password"]:
                 st["is_admin"] = True
                 st["awaiting_password"] = False
-                
                 if user_id not in self.admins_data["admins"]:
                     self.admins_data["admins"].append(user_id)
-                
                 st["current_menu"] = "admin"
-                await message.answer(
-                    f"{ADMIN_ICON} *Авторизація успішна!*",
-                    parse_mode=ParseMode.MARKDOWN,
-                    reply_markup=self.admin_keyboard()
-                )
+                await safe_send(message, f"{ADMIN_ICON} Успішно!", self.admin_keyboard())
             else:
-                await message.answer(
-                    "❌ *Невірний пароль!*\nСпробуйте ще раз:",
-                    parse_mode=ParseMode.MARKDOWN,
-                    reply_markup=ReplyKeyboardMarkup(
-                        keyboard=[[KeyboardButton(text="❌ Скасувати")]],
-                        resize_keyboard=True
-                    )
-                )
-        
-        @self.router.message(F.text.contains(f"{MENU_ICON} Головне меню"))
+                await safe_send(message, "❌ Невірний пароль", self.cancel_keyboard())
+
+        @self.router.message(F.text == f"{MENU_ICON} Головне меню")
         async def back_to_main(message: Message):
             user_id = message.from_user.id
             st = self.state(user_id)
             st.update({"current_menu": "main", "selected_class": None, "selected_day": None})
-            self.stats.commands_used += 1
-            await message.answer(f"{MENU_ICON} *Головне меню*", parse_mode=ParseMode.MARKDOWN, reply_markup=self.main_keyboard(user_id))
-        
-        @self.router.message(F.text.contains(f"{BACK_ICON} Назад"))
+            await safe_send(message, f"{MENU_ICON} Головне меню", self.main_keyboard(user_id))
+
+        @self.router.message(F.text == f"{BACK_ICON} Назад")
         async def back_button(message: Message):
             user_id = message.from_user.id
             st = self.state(user_id)
+            
             if st["current_menu"] == "schedule":
                 st["selected_class"] = None
                 st["selected_day"] = None
-                await message.answer("Оберіть опцію:", reply_markup=self.schedule_main_keyboard(user_id))
-        
+                await safe_send(message, f"{SCHEDULE_ICON} Розклад", self.schedule_main_keyboard(user_id))
+            else:
+                await safe_send(message, f"{MENU_ICON} Головне меню", self.main_keyboard(user_id))
+
+        @self.router.message(F.text == f"{BACK_ICON} Інший клас")
+        async def other_class(message: Message):
+            user_id = message.from_user.id
+            st = self.state(user_id)
+            st["selected_class"] = None
+            st["selected_day"] = None
+            await safe_send(message, "Оберіть клас:", self.classes_keyboard(user_id))
+
+        @self.router.message(F.text == f"{BACK_ICON} Інший день")
+        async def other_day(message: Message):
+            user_id = message.from_user.id
+            st = self.state(user_id)
+            
+            if not st.get("selected_class"):
+                await safe_send(message, "❌ Спочатку оберіть клас!", self.classes_keyboard(user_id))
+                return
+            
+            st["selected_day"] = None
+            await safe_send(
+                message,
+                f"{SCHEDULE_ICON} Клас: {st['selected_class']}\n\nОберіть день:",
+                self.days_keyboard(st['selected_class'], user_id)
+            )
+
+        @self.router.message(F.text == "🔙 Назад до адмінки")
+        async def back_to_admin(message: Message):
+            user_id = message.from_user.id
+            st = self.state(user_id)
+            st["current_menu"] = "admin"
+            await safe_send(message, f"{ADMIN_ICON} Адмін-панель", self.admin_keyboard())
+
         @self.router.message(F.text.contains(f"{DONATE_ICON} Підтримати"))
         async def donate_cmd(message: Message):
             user_id = message.from_user.id
             st = self.state(user_id)
             
             if st.get("is_donor"):
-                await message.answer(
-                    f"{DONOR_ICON} *Ви вже підтримали проект!*\n\nДякуємо за вашу допомогу! 🙏",
-                    parse_mode=ParseMode.MARKDOWN,
-                    reply_markup=self.main_keyboard(user_id)
-                )
+                await safe_send(message, f"{DONOR_ICON} Ви вже підтримали!", self.main_keyboard(user_id))
                 return
             
-            donate_text = (
-                f"{DONATE_ICON} *Підтримати розробку бота*\n\n"
-                f"Бот працює безкоштовно 24/7, але сервери та API потребують коштів.\n\n"
-                f"*Як допомогти:*\n"
-                f"1️⃣ Перейдіть за посиланням на Monobank\n"
-                f"2️⃣ Зробіть донат від 50 грн\n"
-                f"3️⃣ В описі до платежу вкажіть свій Telegram ID: `{user_id}`\n"
-                f"4️⃣ Натисніть *«Я задонатив»*\n\n"
-                f"*Після перевірки ви отримаєте:*\n"
-                f"⭐ Спеціальний статус\n"
-                f"🚫 Зникнуть кнопки донату\n"
-                f"🎁 Ексклюзивні фішки\n\n"
-                f"*Ваш Telegram ID:* `{user_id}`"
+            await message.answer(
+                f"{DONATE_ICON} Підтримати\n\n1. Перейдіть за посиланням\n2. Зробіть донат\n3. В описі вкажіть ID: {user_id}",
+                reply_markup=self.donate_keyboard()
             )
-            
-            await message.answer(donate_text, parse_mode=ParseMode.MARKDOWN, reply_markup=self.donate_keyboard())
-        
+
         @self.router.callback_query(F.data == "donate_done")
         async def donate_done(callback: CallbackQuery):
             user_id = callback.from_user.id
-            
-            await callback.message.edit_text(
-                f"{DONATE_ICON} *Дякуємо за підтримку!*\n\n"
-                f"Адміністратор перевірить платіж і додасть вас до списку донатерів.\n"
-                f"Це може зайняти деякий час.\n\n"
-                f"Ваш ID: `{user_id}`",
-                parse_mode=ParseMode.MARKDOWN
-            )
-            
-            for admin_id in self.admins_data.get("admins", []):
-                try:
-                    await self.bot.send_message(
-                        admin_id,
-                        f"{DONATE_ICON} *Новий донат!*\n\n"
-                        f"Користувач: {user_id}\n"
-                        f"Username: @{callback.from_user.username or 'немає'}\n"
-                        f"Додайте в donors.json",
-                        parse_mode=ParseMode.MARKDOWN
-                    )
-                except:
-                    pass
-            
-            await callback.answer("Дякуємо!")
-        
-        @self.router.callback_query(F.data == "donate_hide")
-        async def donate_hide(callback: CallbackQuery):
-            user_id = callback.from_user.id
             st = self.state(user_id)
-            st["donate_hidden"] = True
             
-            await callback.message.edit_text(
-                f"{MENU_ICON} *Кнопки донату приховано*\n\n"
-                f"Ви можете повернути їх у будь-який момент через /start",
-                parse_mode=ParseMode.MARKDOWN
-            )
+            st["is_donor"] = True
+            self.donors.add(user_id)
+            self.stats.donors.add(user_id)
+            
+            await callback.message.edit_text(f"{DONATE_ICON} Дякуємо! Адмін перевірить платіж.")
             await callback.answer()
-        
+
         @self.router.message(F.text.contains(f"{BELL_ICON} Дзвінки"))
         async def bells_schedule(message: Message):
             user_id = message.from_user.id
             st = self.state(user_id)
             
-            await loading_animation(message, "Завантаження розкладу дзвінків")
+            await loading_animation(message, "Завантаження")
             
+            shift = 1
             if st.get("selected_class"):
-                shift = self.parser.get_shift_for_class(st["selected_class"])
+                shift = self.get_shift_for_class(st["selected_class"])
             else:
-                hour = datetime.now().hour
-                shift = 2 if hour >= 12 else 1
+                shift = 2 if datetime.now().hour >= 12 else 1
             
-            bells_text = self.parser.format_bells_schedule(shift)
+            bells_text = self.format_bells_schedule(shift)
             
             keyboard = ReplyKeyboardMarkup(
                 keyboard=[
-                    [KeyboardButton(text=f"{BACK_ICON} Назад")],
+                    [KeyboardButton(text=f"{BACK_ICON} Назад до розкладу")],
                     [KeyboardButton(text=f"{MENU_ICON} Головне меню")]
                 ],
                 resize_keyboard=True
             )
             
-            await message.answer(bells_text, parse_mode=ParseMode.MARKDOWN, reply_markup=keyboard)
-        
+            await safe_send(message, bells_text, keyboard)
+
+        @self.router.message(F.text == f"{BACK_ICON} Назад до розкладу")
+        async def back_to_schedule(message: Message):
+            user_id = message.from_user.id
+            st = self.state(user_id)
+            st["current_menu"] = "schedule"
+            
+            if st.get("selected_class"):
+                await safe_send(
+                    message,
+                    f"{SCHEDULE_ICON} Клас: {st['selected_class']}\n\nОберіть день:",
+                    self.days_keyboard(st['selected_class'], user_id)
+                )
+            else:
+                await safe_send(message, f"{SCHEDULE_ICON} Розклад", self.schedule_main_keyboard(user_id))
+
         @self.router.message(F.text.contains(f"{AI_ICON} AI Помічник"))
         async def ai_assistant(message: Message):
             user_id = message.from_user.id
@@ -443,222 +558,138 @@ class TelegramBot:
             st["current_menu"] = "ai"
             self.stats.commands_used += 1
             
-            await message.answer(
-                f"{AI_ICON} *Режим AI Помічника*\n\n"
-                f"▸ *Асистент* — загальні питання\n"
-                f"▸ *Програміст* — технічні питання\n"
-                f"▸ *Детально (1 раз)* — розгорнута відповідь\n"
-                f"▸ *Режими* — список усіх режимів\n"
-                f"▸ *Очистити* — скинути історію\n\n"
-                f"_Просто напишіть ваше питання..._",
-                parse_mode=ParseMode.MARKDOWN,
-                reply_markup=self.ai_keyboard(user_id)
+            await safe_send(
+                message,
+                f"{AI_ICON} AI Помічник\n\nОберіть режим:",
+                self.ai_keyboard(user_id)
             )
-        
-        @self.router.message(F.text == "Асистент")
-        async def assistant_mode(message: Message):
+
+        @self.router.message(lambda m: m.text in self.client.get_available_modes())
+        async def select_mode(message: Message):
             user_id = message.from_user.id
             st = self.state(user_id)
-            if st["current_menu"] == "ai":
-                st["mode"] = "assistant"
-                await message.answer("✅ *Режим: Асистент*", parse_mode=ParseMode.MARKDOWN, reply_markup=self.ai_keyboard(user_id))
-        
-        @self.router.message(F.text == "Програміст")
-        async def programmer_mode(message: Message):
+            st["mode"] = message.text
+            await safe_send(message, f"✅ Режим: {message.text}", self.ai_keyboard(user_id))
+
+        @self.router.message(F.text == "Детально")
+        async def detail_mode(message: Message):
             user_id = message.from_user.id
             st = self.state(user_id)
-            if st["current_menu"] == "ai":
-                st["mode"] = "teach"
-                await message.answer("✅ *Режим: Програміст*", parse_mode=ParseMode.MARKDOWN, reply_markup=self.ai_keyboard(user_id))
-        
-        @self.router.message(F.text == "Детально (1 раз)")
-        async def detail_once(message: Message):
-            user_id = message.from_user.id
-            st = self.state(user_id)
-            if st["current_menu"] == "ai":
-                st["detail_next"] = True
-                await message.answer("✅ *Наступна відповідь буде детальною*", parse_mode=ParseMode.MARKDOWN, reply_markup=self.ai_keyboard(user_id))
-        
+            st["detail_next"] = True
+            await safe_send(message, "✅ Наступна відповідь детально", self.ai_keyboard(user_id))
+
         @self.router.message(F.text == "Очистити")
-        async def clear_state(message: Message):
+        async def clear_mode(message: Message):
             user_id = message.from_user.id
             st = self.state(user_id)
-            if st["current_menu"] == "ai":
-                st.update({"detail_next": False, "pending_detail_q": None})
-                await message.answer("🧹 *Контекст очищено*", parse_mode=ParseMode.MARKDOWN, reply_markup=self.ai_keyboard(user_id))
-        
-        @self.router.message(F.text == "Режими")
-        async def modes_cmd(message: Message):
-            modes = self.client.get_available_modes()
-            if not modes:
-                await message.answer("📭 *Немає додаткових режимів*", parse_mode=ParseMode.MARKDOWN)
-                return
-            text = "📋 *Доступні режими:*\n\n" + "\n".join(f"▸ {m}" for m in modes)
-            await message.answer(text, parse_mode=ParseMode.MARKDOWN)
-        
+            st["detail_next"] = False
+            await safe_send(message, "🧹 Очищено", self.ai_keyboard(user_id))
+
         @self.router.message(F.text.contains(f"{SCHEDULE_ICON} Розклад"))
         async def schedule_start(message: Message):
             user_id = message.from_user.id
             st = self.state(user_id)
             st["current_menu"] = "schedule"
-            st["selected_class"] = None
-            st["selected_day"] = None
             self.stats.commands_used += 1
             self.stats.schedule_views += 1
             
-            classes = self.parser.get_classes()
-            if not classes:
-                await message.answer(
-                    "❌ *Розклад не завантажено*\nЗверніться до адміністратора.",
-                    parse_mode=ParseMode.MARKDOWN,
-                    reply_markup=self.main_keyboard(user_id)
+            if st.get("selected_class"):
+                await safe_send(
+                    message,
+                    f"{SCHEDULE_ICON} Розклад\n\nОбраний клас: {st['selected_class']}\n\nОберіть день:",
+                    self.days_keyboard(st['selected_class'], user_id)
                 )
-                return
-            
-            await message.answer(
-                f"{SCHEDULE_ICON} *Розклад 12 ліцею*\n\nОберіть опцію:",
-                parse_mode=ParseMode.MARKDOWN,
-                reply_markup=self.schedule_main_keyboard(user_id)
-            )
-        
+            else:
+                await safe_send(message, f"{SCHEDULE_ICON} Розклад\n\nОберіть опцію:", self.schedule_main_keyboard(user_id))
+
         @self.router.message(F.text == f"{CLASS_ICON} Вибрати клас")
         async def select_class_menu(message: Message):
             user_id = message.from_user.id
             st = self.state(user_id)
             if st["current_menu"] == "schedule":
-                keyboard = self.classes_keyboard(user_id)
-                if keyboard:
-                    await message.answer("Оберіть ваш клас:", reply_markup=keyboard)
-        
-        @self.router.message(lambda message: message.text and message.text.startswith(CLASS_ICON))
+                await safe_send(message, "Оберіть клас:", self.classes_keyboard(user_id))
+
+        @self.router.message(lambda m: m.text and m.text.startswith(CLASS_ICON))
         async def select_class(message: Message):
             user_id = message.from_user.id
             st = self.state(user_id)
             
-            if st["current_menu"] != "schedule":
-                return
-            
-            class_name = message.text.replace(CLASS_ICON, "")
+            class_name = message.text.replace(CLASS_ICON, "").strip()
             st["selected_class"] = class_name
             st["selected_day"] = None
-            shift = self.parser.get_shift_for_class(class_name)
-            shift_text = SHIFTS[str(shift)]
             
-            await message.answer(
-                f"{SCHEDULE_ICON} *Обрано клас:* {class_name}\n{shift_text}\n\nТепер оберіть день 👇",
-                parse_mode=ParseMode.MARKDOWN,
-                reply_markup=self.days_keyboard(class_name, user_id)
+            await safe_send(
+                message,
+                f"{SCHEDULE_ICON} Обрано клас: {class_name}\n\nОберіть день:",
+                self.days_keyboard(class_name, user_id)
             )
-        
-        @self.router.message(lambda message: message.text and message.text.startswith(DAY_ICON))
+
+        @self.router.message(lambda m: m.text and m.text.startswith(DAY_ICON))
         async def select_day(message: Message):
             user_id = message.from_user.id
             st = self.state(user_id)
             
-            if st["current_menu"] != "schedule":
-                return
-            if not st["selected_class"]:
-                await message.answer("❌ *Спочатку оберіть клас!*", parse_mode=ParseMode.MARKDOWN, reply_markup=self.classes_keyboard(user_id))
+            if not st.get("selected_class"):
+                await safe_send(message, "❌ Спочатку оберіть клас!", self.classes_keyboard(user_id))
                 return
             
-            day_name = message.text.replace(DAY_ICON, "")
+            day_name = message.text.replace(DAY_ICON, "").strip()
             day_key = DAYS_UA.get(day_name)
-            
-            if not day_key:
-                return
             
             st["selected_day"] = day_key
             self.stats.schedule_views += 1
             
-            await loading_animation(message, "Завантаження розкладу")
-            schedule_text = self.parser.get_schedule_for_class_day(st["selected_class"], day_key)
+            await loading_animation(message, "Завантаження")
+            schedule_text = self.get_schedule_for_class_day(st["selected_class"], day_key)
             
-            await message.answer(schedule_text, parse_mode=ParseMode.MARKDOWN, reply_markup=self.schedule_result_keyboard(user_id))
-        
+            await safe_send(message, schedule_text, self.schedule_result_keyboard(user_id))
+
         @self.router.message(F.text == "📆 Сьогодні")
         async def schedule_today(message: Message):
             user_id = message.from_user.id
             st = self.state(user_id)
             
-            if st["current_menu"] != "schedule":
-                return
-            if not st["selected_class"]:
-                await message.answer("❌ *Спочатку оберіть клас!*", parse_mode=ParseMode.MARKDOWN, reply_markup=self.classes_keyboard(user_id))
+            if not st.get("selected_class"):
+                await safe_send(message, "❌ Спочатку оберіть клас!", self.classes_keyboard(user_id))
                 return
             
-            await loading_animation(message, "Завантаження розкладу на сьогодні")
-            schedule_text = self.parser.get_schedule_for_today(st["selected_class"])
-            await message.answer(schedule_text, parse_mode=ParseMode.MARKDOWN, reply_markup=self.schedule_result_keyboard(user_id))
-        
+            await loading_animation(message, "Завантаження")
+            schedule_text = self.get_schedule_for_today(st["selected_class"])
+            await safe_send(message, schedule_text, self.schedule_result_keyboard(user_id))
+
         @self.router.message(F.text == "📅 Завтра")
         async def schedule_tomorrow(message: Message):
             user_id = message.from_user.id
             st = self.state(user_id)
             
-            if st["current_menu"] != "schedule":
-                return
-            if not st["selected_class"]:
-                await message.answer("❌ *Спочатку оберіть клас!*", parse_mode=ParseMode.MARKDOWN, reply_markup=self.classes_keyboard(user_id))
+            if not st.get("selected_class"):
+                await safe_send(message, "❌ Спочатку оберіть клас!", self.classes_keyboard(user_id))
                 return
             
-            await loading_animation(message, "Завантаження розкладу на завтра")
-            schedule_text = self.parser.get_schedule_for_tomorrow(st["selected_class"])
-            await message.answer(schedule_text, parse_mode=ParseMode.MARKDOWN, reply_markup=self.schedule_result_keyboard(user_id))
-        
+            await loading_animation(message, "Завантаження")
+            schedule_text = self.get_schedule_for_tomorrow(st["selected_class"])
+            await safe_send(message, schedule_text, self.schedule_result_keyboard(user_id))
+
         @self.router.message(F.text == "📋 Весь розклад")
         async def full_schedule(message: Message):
             user_id = message.from_user.id
             st = self.state(user_id)
             
-            if st["current_menu"] != "schedule":
-                return
-            if not st["selected_class"]:
-                await message.answer("❌ *Спочатку оберіть клас!*", parse_mode=ParseMode.MARKDOWN, reply_markup=self.classes_keyboard(user_id))
+            if not st.get("selected_class"):
+                await safe_send(message, "❌ Спочатку оберіть клас!", self.classes_keyboard(user_id))
                 return
             
-            await loading_animation(message, "Завантаження повного розкладу")
-            schedule_text = self.parser.get_full_schedule_for_class(st["selected_class"])
+            await loading_animation(message, "Завантаження")
+            schedule_text = self.get_full_schedule_for_class(st["selected_class"])
             
             if len(schedule_text) > 4000:
-                parts = list(split_chunks(schedule_text, 4000))
-                for i, part in enumerate(parts):
-                    await message.answer(
-                        part,
-                        parse_mode=ParseMode.MARKDOWN,
-                        reply_markup=self.schedule_result_keyboard(user_id) if i == len(parts)-1 else None
-                    )
+                for chunk in split_chunks(schedule_text, 4000):
+                    await safe_send(message, chunk, self.schedule_result_keyboard(user_id))
             else:
-                await message.answer(schedule_text, parse_mode=ParseMode.MARKDOWN, reply_markup=self.schedule_result_keyboard(user_id))
-        
-        @self.router.message(F.text.contains(f"{BACK_ICON} Інший клас"))
-        async def other_class(message: Message):
-            user_id = message.from_user.id
-            st = self.state(user_id)
-            if st["current_menu"] == "schedule":
-                st["selected_class"] = None
-                st["selected_day"] = None
-                keyboard = self.classes_keyboard(user_id)
-                if keyboard:
-                    await message.answer("Оберіть інший клас:", reply_markup=keyboard)
-        
-        @self.router.message(F.text.contains(f"{BACK_ICON} Інший день"))
-        async def other_day(message: Message):
-            user_id = message.from_user.id
-            st = self.state(user_id)
-            if st["current_menu"] == "schedule":
-                if not st["selected_class"]:
-                    await message.answer("❌ *Спочатку оберіть клас!*", parse_mode=ParseMode.MARKDOWN, reply_markup=self.classes_keyboard(user_id))
-                    return
-                
-                st["selected_day"] = None
-                await message.answer(
-                    f"{SCHEDULE_ICON} *Клас:* {st['selected_class']}\n\nОберіть інший день:",
-                    parse_mode=ParseMode.MARKDOWN,
-                    reply_markup=self.days_keyboard(st['selected_class'], user_id)
-                )
-        
-        @self.router.message(F.text == "📊 Статистика реального часу")
-        async def admin_stats_realtime(message: Message):
+                await safe_send(message, schedule_text, self.schedule_result_keyboard(user_id))
+
+        @self.router.message(F.text == "📊 Статистика")
+        async def admin_stats(message: Message):
             user_id = message.from_user.id
             st = self.state(user_id)
             
@@ -673,74 +704,48 @@ class TelegramBot:
                 hours = int(uptime.total_seconds() // 3600)
                 minutes = int((uptime.total_seconds() % 3600) // 60)
                 
-                stats_text = (
-                    f"{ADMIN_ICON} *Статистика в реальному часі*\n\n"
-                    f"🟢 *Онлайн зараз:* {online_now}\n"
-                    f"📅 *Активні сьогодні:* {active_today}\n"
-                    f"👥 *Всього користувачів:* {total_users}\n"
-                    f"📊 *Всього команд:* {commands}\n"
-                    f"📋 *Переглядів розкладу:* {schedule_views}\n"
-                    f"🤖 *AI запитів:* {ai_queries}\n"
-                    f"⏱ *Аптайм:* {hours} год {minutes} хв\n"
-                    f"💰 *Донатерів:* {len(self.donors) + len(self.stats.donors)}\n\n"
-                    f"_Дані в ОЗУ, скидаються при перезапуску_"
+                await safe_send(
+                    message,
+                    f"{ADMIN_ICON} Статистика\n\n"
+                    f"🟢 Онлайн: {online_now}\n"
+                    f"📅 Сьогодні: {active_today}\n"
+                    f"👥 Всього: {total_users}\n"
+                    f"📊 Команд: {commands}\n"
+                    f"📋 Розклад: {schedule_views}\n"
+                    f"🤖 AI: {ai_queries}\n"
+                    f"⏱ Аптайм: {hours}год {minutes}хв\n"
+                    f"💰 Донатерів: {len(self.donors)}"
                 )
-                
-                await message.answer(stats_text, parse_mode=ParseMode.MARKDOWN)
-        
-        @self.router.message(F.text == "👥 Активні користувачі")
-        async def admin_active_users(message: Message):
+
+        @self.router.message(F.text == "👥 Активні")
+        async def admin_active(message: Message):
             user_id = message.from_user.id
             st = self.state(user_id)
             
             if st["current_menu"] == "admin" and st["is_admin"]:
                 online_list = list(self.stats.online_users)[:20]
-                online_text = "\n".join([f"• `{uid}`" for uid in online_list]) if online_list else "• Немає активних"
+                online_text = "\n".join([f"• {uid}" for uid in online_list]) if online_list else "• Немає"
                 
-                text = (
-                    f"👥 *Активні користувачі*\n\n"
-                    f"🟢 *Зараз онлайн:* {len(self.stats.online_users)}\n"
-                    f"{online_text}\n\n"
-                    f"📅 *Сьогодні:* {len(self.stats.daily_active)}\n"
-                    f"👤 *Всього:* {self.stats.total_users}"
+                await safe_send(
+                    message,
+                    f"👥 Активні\n\n🟢 Зараз: {len(self.stats.online_users)}\n{online_text}\n\n📅 Сьогодні: {len(self.stats.daily_active)}"
                 )
-                
-                await message.answer(text, parse_mode=ParseMode.MARKDOWN)
-        
-        @self.router.message(F.text == "🔄 Оновити розклад")
-        async def admin_reload_schedule(message: Message):
-            user_id = message.from_user.id
-            st = self.state(user_id)
-            
-            if st["current_menu"] == "admin" and st["is_admin"]:
-                await loading_animation(message, "Оновлення розкладу")
-                self.parser.reload()
-                classes_count = len(self.parser.get_classes())
-                
-                await message.answer(
-                    f"✅ *Розклад оновлено!*\n\n📚 Класів: {classes_count}",
-                    parse_mode=ParseMode.MARKDOWN,
-                    reply_markup=self.admin_keyboard()
-                )
-        
+
         @self.router.message(F.text == "🔑 Змінити пароль")
-        async def admin_change_password_start(message: Message):
+        async def change_password_start(message: Message):
             user_id = message.from_user.id
             st = self.state(user_id)
             
             if st["current_menu"] == "admin" and st["is_admin"]:
-                st["awaiting_password"] = "change"
-                await message.answer(
-                    f"🔑 *Зміна пароля*\n\nПоточний пароль: `{self.admins_data['current_password']}`\n\nВведіть *новий пароль*:",
-                    parse_mode=ParseMode.MARKDOWN,
-                    reply_markup=ReplyKeyboardMarkup(
-                        keyboard=[[KeyboardButton(text="❌ Скасувати")]],
-                        resize_keyboard=True
-                    )
+                st["awaiting_new_password"] = True
+                await safe_send(
+                    message,
+                    f"🔑 Поточний пароль: {self.admins_data['current_password']}\n\nВведіть новий:",
+                    self.cancel_keyboard()
                 )
-        
-        @self.router.message(lambda message: self.state(message.from_user.id)["awaiting_password"] == "change" and message.text != "❌ Скасувати")
-        async def admin_change_password_finish(message: Message):
+
+        @self.router.message(lambda m: self.state(m.from_user.id)["awaiting_new_password"])
+        async def change_password_finish(message: Message):
             user_id = message.from_user.id
             st = self.state(user_id)
             
@@ -749,20 +754,13 @@ class TelegramBot:
             except:
                 pass
             
-            new_password = message.text.strip()
-            if len(new_password) < 4:
-                await message.answer(
-                    "❌ *Пароль має бути від 4 символів!*",
-                    parse_mode=ParseMode.MARKDOWN,
-                    reply_markup=ReplyKeyboardMarkup(
-                        keyboard=[[KeyboardButton(text="❌ Скасувати")]],
-                        resize_keyboard=True
-                    )
-                )
+            new_pass = message.text.strip()
+            if len(new_pass) < 4:
+                await safe_send(message, "❌ Мінімум 4 символи", self.cancel_keyboard())
                 return
             
-            old_password = self.admins_data["current_password"]
-            self.admins_data["current_password"] = new_password
+            old = self.admins_data["current_password"]
+            self.admins_data["current_password"] = new_pass
             
             try:
                 with open(ADMINS_FILE, 'w', encoding='utf-8') as f:
@@ -770,62 +768,117 @@ class TelegramBot:
             except:
                 pass
             
-            st["awaiting_password"] = False
-            await message.answer(
-                f"✅ *Пароль успішно змінено!*\n\nСтарий: `{old_password}`\nНовий: `{new_password}`",
-                parse_mode=ParseMode.MARKDOWN,
-                reply_markup=self.admin_keyboard()
-            )
-        
+            st["awaiting_new_password"] = False
+            await safe_send(message, f"✅ Пароль змінено!\nСтарий: {old}\nНовий: {new_pass}", self.admin_keyboard())
+
         @self.router.message(F.text == "📢 Розсилка")
-        async def admin_broadcast_start(message: Message):
+        async def broadcast_start(message: Message):
             user_id = message.from_user.id
             st = self.state(user_id)
             
             if st["current_menu"] == "admin" and st["is_admin"]:
                 st["awaiting_broadcast"] = True
-                await message.answer(
-                    "📢 *Розсилка*\n\nВведіть текст для розсилки всім користувачам:",
-                    parse_mode=ParseMode.MARKDOWN,
-                    reply_markup=ReplyKeyboardMarkup(
-                        keyboard=[[KeyboardButton(text="❌ Скасувати")]],
-                        resize_keyboard=True
-                    )
-                )
-        
-        @self.router.message(lambda message: self.state(message.from_user.id)["awaiting_broadcast"] and message.text != "❌ Скасувати")
-        async def admin_broadcast_send(message: Message):
+                await safe_send(message, "📢 Введіть текст для розсилки:", self.cancel_keyboard())
+
+        @self.router.message(lambda m: self.state(m.from_user.id)["awaiting_broadcast"])
+        async def broadcast_send(message: Message):
             user_id = message.from_user.id
             st = self.state(user_id)
             
-            broadcast_text = message.text.strip()
+            text = message.text.strip()
             st["awaiting_broadcast"] = False
             
-            await message.answer(f"📤 *Розсилка запущена...*", parse_mode=ParseMode.MARKDOWN)
+            await safe_send(message, "📤 Розсилка...")
             
             sent = 0
-            failed = 0
-            
             for uid in self.user_state.keys():
                 try:
-                    await self.bot.send_message(
-                        uid,
-                        f"📢 *Оголошення адміністратора:*\n\n{broadcast_text}",
-                        parse_mode=ParseMode.MARKDOWN
-                    )
+                    await self.bot.send_message(uid, f"📢 {text}")
                     sent += 1
                     await asyncio.sleep(0.05)
                 except:
-                    failed += 1
+                    pass
             
-            await message.answer(
-                f"✅ *Розсилка завершена!*\n\n"
-                f"📨 Відправлено: {sent}\n"
-                f"❌ Помилок: {failed}",
-                parse_mode=ParseMode.MARKDOWN,
-                reply_markup=self.admin_keyboard()
-            )
-        
+            await safe_send(message, f"✅ Відправлено: {sent}", self.admin_keyboard())
+
+        @self.router.message(F.text == "🤖 Керування режимами")
+        async def ai_management(message: Message):
+            user_id = message.from_user.id
+            st = self.state(user_id)
+            
+            if st["current_menu"] == "admin" and st["is_admin"]:
+                st["current_menu"] = "ai_management"
+                await safe_send(
+                    message,
+                    f"{AI_ICON} Керування режимами\n\n"
+                    f"📋 Список режимів\n"
+                    f"➕ Додати режим\n"
+                    f"❌ Видалити режим",
+                    self.ai_management_keyboard()
+                )
+
+        @self.router.message(F.text == "📋 Список режимів")
+        async def list_modes(message: Message):
+            user_id = message.from_user.id
+            st = self.state(user_id)
+            
+            if st["current_menu"] == "ai_management" and st["is_admin"]:
+                modes = self.client.get_available_modes()
+                text = f"{AI_ICON} Режими:\n\n" + "\n".join([f"• {m}" for m in modes])
+                await safe_send(message, text)
+
+        @self.router.message(F.text == "➕ Додати режим")
+        async def add_mode_prompt(message: Message):
+            user_id = message.from_user.id
+            st = self.state(user_id)
+            
+            if st["current_menu"] == "ai_management" and st["is_admin"]:
+                await safe_send(
+                    message,
+                    "Введіть: /learn назва інструкція\n\n"
+                    "Приклад: /learn math Ти професор математики",
+                    self.cancel_keyboard()
+                )
+
+        @self.router.message(F.text == "❌ Видалити режим")
+        async def delete_mode_prompt(message: Message):
+            user_id = message.from_user.id
+            st = self.state(user_id)
+            
+            if st["current_menu"] == "ai_management" and st["is_admin"]:
+                modes = self.client.get_available_modes()
+                
+                keyboard = []
+                for mode in modes:
+                    if mode not in ["assistant", "programmer"]:
+                        keyboard.append([InlineKeyboardButton(text=mode, callback_data=f"del_{mode}")])
+                keyboard.append([InlineKeyboardButton(text="❌ Скасувати", callback_data="cancel")])
+                
+                await message.answer("Виберіть режим для видалення:", reply_markup=InlineKeyboardMarkup(inline_keyboard=keyboard))
+
+        @self.router.callback_query(F.data.startswith("del_"))
+        async def delete_mode_confirm(callback: CallbackQuery):
+            user_id = callback.from_user.id
+            st = self.state(user_id)
+            
+            if not st["is_admin"]:
+                await callback.answer("Немає доступу")
+                return
+            
+            mode = callback.data.replace("del_", "")
+            
+            if self.client.delete_mode(mode):
+                await callback.message.edit_text(f"✅ Режим '{mode}' видалено")
+            else:
+                await callback.message.edit_text(f"❌ Помилка")
+            
+            await callback.answer()
+
+        @self.router.callback_query(F.data == "cancel")
+        async def cancel_callback(callback: CallbackQuery):
+            await callback.message.delete()
+            await callback.answer()
+
         @self.router.message()
         async def ai_chat(message: Message):
             text = (message.text or "").strip()
@@ -840,30 +893,21 @@ class TelegramBot:
                 self.stats.commands_used += 1
                 
                 async with self.user_locks[user_id]:
-                    await self.handle_ai_question(message, text)
-    
-    async def handle_ai_question(self, message: Message, text: str):
-        user_id = message.from_user.id
-        st = self.state(user_id)
-        
-        mode = st["mode"]
+                    await self.handle_ai_question(message, text, st["mode"])
+
+    async def handle_ai_question(self, message: Message, text: str, mode: str):
+        st = self.state(message.from_user.id)
         do_detail = st["detail_next"]
         st["detail_next"] = False
 
         if do_detail:
             max_tokens = DETAIL_MAX_TOKENS
-            length_rule = "Відповідь детально, розгорнуто, але без води. Максимум 20 рядків."
+            length_rule = "Відповідь детально."
         else:
             max_tokens = SHORT_MAX_TOKENS
-            length_rule = "Відповідь коротко: 3-7 рядків, тільки суть."
+            length_rule = "Відповідь коротко."
 
-        prompt = (
-            "Ти корисний AI асистент. Пиши по-людськи, природно.\n"
-            "Без зайвих вступів, без моралей, без емодзі.\n"
-            "Використовуй просту, зрозумілу мову.\n"
-            f"{length_rule}\n\n"
-            f"Запит: {text}"
-        )
+        prompt = f"{length_rule}\n\nЗапит: {text}"
 
         await message.bot.send_chat_action(message.chat.id, ChatAction.TYPING)
 
@@ -880,13 +924,18 @@ class TelegramBot:
 
         if response and len(response) > 4000:
             for chunk in split_chunks(response, 4000):
-                await message.answer(chunk, reply_markup=self.ai_keyboard(user_id))
+                await safe_send(message, chunk, self.ai_keyboard(message.from_user.id))
         else:
-            await message.answer(response or "❌ Немає відповіді", reply_markup=self.ai_keyboard(user_id))
+            await safe_send(message, response or "❌ Немає відповіді", self.ai_keyboard(message.from_user.id))
+
+    async def drop_pending_updates(self):
+        try:
+            await self.bot.delete_webhook(drop_pending_updates=True)
+        except:
+            pass
 
     async def start_polling(self):
-        print(f"✅ Бот 12-го ліцею запущено")
-        print(f"📚 Завантажено класів: {len(self.parser.get_classes())}")
-        print(f"👑 Адмінів: {len(self.admins_data.get('admins', []))}")
-        print(f"💰 Донатерів: {len(self.donors)}")
-        await self.dp.start_polling(self.bot)
+        print("✅ Бот запущено")
+        print(f"🤖 Режимів: {len(self.client.get_available_modes())}")
+        await self.drop_pending_updates()
+        await self.dp.start_polling(self.bot, drop_pending_updates=True)
