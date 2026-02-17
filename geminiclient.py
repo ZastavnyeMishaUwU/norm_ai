@@ -44,7 +44,7 @@ class GeminiClient:
 
     def delete_mode(self, mode_name: str):
         data = self._load_instructions()
-        if mode_name in data:
+        if mode_name in data and mode_name not in ["assistant", "programmer"]:
             del data[mode_name]
             return self._save_instructions(data)
         return False

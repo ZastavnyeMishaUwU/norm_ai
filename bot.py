@@ -57,6 +57,9 @@ class TelegramBot:
                 "awaiting_password": False,
                 "awaiting_broadcast": False,
                 "awaiting_new_password": False,
+                "awaiting_mode_name": False,
+                "awaiting_mode_instruction": False,
+                "temp_mode_name": None,
                 "first_seen": datetime.now(),
                 "last_active": datetime.now()
             }
@@ -200,8 +203,14 @@ class TelegramBot:
     def ai_keyboard(self, user_id=None):
         modes = self.client.get_available_modes()
         keyboard = []
-        for mode in modes:
-            keyboard.append([KeyboardButton(text=mode)])
+        row = []
+        for i, mode in enumerate(modes, 1):
+            row.append(KeyboardButton(text=mode))
+            if i % 2 == 0:
+                keyboard.append(row)
+                row = []
+        if row:
+            keyboard.append(row)
         keyboard.append([KeyboardButton(text="Детально"), KeyboardButton(text="Очистити")])
         keyboard.append([KeyboardButton(text=f"{MENU_ICON} Головне меню")])
         return ReplyKeyboardMarkup(keyboard=keyboard, resize_keyboard=True)
@@ -292,7 +301,7 @@ class TelegramBot:
                 [KeyboardButton(text="🔑 Змінити пароль")],
                 [KeyboardButton(text="📢 Розсилка"), 
                  KeyboardButton(text="👥 Активні")],
-                [KeyboardButton(text="🤖 Керування режимами")],
+                [KeyboardButton(text="🤖 Керування режимами AI")],
                 [KeyboardButton(text=f"{MENU_ICON} Головне меню")]
             ],
             resize_keyboard=True
@@ -302,7 +311,8 @@ class TelegramBot:
         return ReplyKeyboardMarkup(
             keyboard=[
                 [KeyboardButton(text="📋 Список режимів")],
-                [KeyboardButton(text="➕ Додати режим"), KeyboardButton(text="❌ Видалити режим")],
+                [KeyboardButton(text="➕ Додати новий режим")],
+                [KeyboardButton(text="❌ Видалити режим")],
                 [KeyboardButton(text="🔙 Назад до адмінки")]
             ],
             resize_keyboard=True
@@ -370,39 +380,12 @@ class TelegramBot:
                     f"🔑 Змінити пароль\n"
                     f"📢 Розсилка\n"
                     f"👥 Активні\n"
-                    f"🤖 Керування режимами",
+                    f"🤖 Керування режимами AI",
                     self.admin_keyboard()
                 )
             else:
                 st["awaiting_password"] = True
                 await safe_send(message, f"{ADMIN_ICON} Введіть пароль:", self.cancel_keyboard())
-
-        @self.router.message(Command("learn"))
-        async def learn_cmd(message: Message):
-            user_id = message.from_user.id
-            st = self.state(user_id)
-            
-            if not st["is_admin"]:
-                await safe_send(message, "❌ Тільки для адмінів")
-                return
-            
-            parts = message.text.split(" ", 2)
-            if len(parts) < 3:
-                await safe_send(message, "Формат: /learn назва інструкція")
-                return
-            
-            mode_name = parts[1].lower()
-            instruction = parts[2]
-            
-            if self.client.add_mode(mode_name, instruction):
-                await safe_send(
-                    message,
-                    f"✅ Режим *{mode_name}* додано!\n\n"
-                    f"Тепер він доступний в AI меню.",
-                    parse_mode=ParseMode.MARKDOWN
-                )
-            else:
-                await safe_send(message, "❌ Помилка додавання")
 
         @self.router.message(F.text == "❌ Скасувати")
         async def cancel_action(message: Message):
@@ -411,7 +394,10 @@ class TelegramBot:
             st.update({
                 "awaiting_password": False,
                 "awaiting_broadcast": False,
-                "awaiting_new_password": False
+                "awaiting_new_password": False,
+                "awaiting_mode_name": False,
+                "awaiting_mode_instruction": False,
+                "temp_mode_name": None
             })
             await safe_send(message, f"{MENU_ICON} Скасовано", self.main_keyboard(user_id))
 
@@ -801,7 +787,7 @@ class TelegramBot:
             
             await safe_send(message, f"✅ Відправлено: {sent}", self.admin_keyboard())
 
-        @self.router.message(F.text == "🤖 Керування режимами")
+        @self.router.message(F.text == "🤖 Керування режимами AI")
         async def ai_management(message: Message):
             user_id = message.from_user.id
             st = self.state(user_id)
@@ -810,35 +796,110 @@ class TelegramBot:
                 st["current_menu"] = "ai_management"
                 await safe_send(
                     message,
-                    f"{AI_ICON} Керування режимами\n\n"
+                    f"{AI_ICON} Керування режимами AI\n\n"
                     f"📋 Список режимів\n"
-                    f"➕ Додати режим\n"
-                    f"❌ Видалити режим",
-                    self.ai_management_keyboard()
+                    f"➕ Додати новий режим\n"
+                    f"❌ Видалити режим\n\n"
+                    f"_Режими живуть до перезапуску Render_",
+                    self.ai_management_keyboard(),
+                    parse_mode=ParseMode.MARKDOWN
                 )
 
         @self.router.message(F.text == "📋 Список режимів")
-        async def list_modes(message: Message):
+        async def list_modes_admin(message: Message):
             user_id = message.from_user.id
             st = self.state(user_id)
             
             if st["current_menu"] == "ai_management" and st["is_admin"]:
                 modes = self.client.get_available_modes()
-                text = f"{AI_ICON} Режими:\n\n" + "\n".join([f"• {m}" for m in modes])
-                await safe_send(message, text)
+                text = f"{AI_ICON} *Доступні режими:*\n\n"
+                for mode in modes:
+                    if mode in ["assistant", "programmer"]:
+                        text += f"• {mode} (базовий)\n"
+                    else:
+                        text += f"• {mode}\n"
+                await safe_send(message, text, parse_mode=ParseMode.MARKDOWN)
 
-        @self.router.message(F.text == "➕ Додати режим")
-        async def add_mode_prompt(message: Message):
+        @self.router.message(F.text == "➕ Додати новий режим")
+        async def add_mode_start(message: Message):
             user_id = message.from_user.id
             st = self.state(user_id)
             
             if st["current_menu"] == "ai_management" and st["is_admin"]:
+                st["awaiting_mode_name"] = True
                 await safe_send(
                     message,
-                    "Введіть: /learn назва інструкція\n\n"
-                    "Приклад: /learn math Ти професор математики",
-                    self.cancel_keyboard()
+                    f"{AI_ICON} Додавання нового режиму\n\n"
+                    f"Введіть *назву* режиму (наприклад: math, history, physics):\n"
+                    f"_Тільки латиниця, без пробілів_",
+                    self.cancel_keyboard(),
+                    parse_mode=ParseMode.MARKDOWN
                 )
+
+        @self.router.message(lambda m: self.state(m.from_user.id)["awaiting_mode_name"])
+        async def add_mode_get_name(message: Message):
+            user_id = message.from_user.id
+            st = self.state(user_id)
+            
+            mode_name = message.text.strip().lower()
+            
+            if not mode_name or " " in mode_name or not mode_name.isascii():
+                await safe_send(message, "❌ Некоректна назва. Тільки латиниця, без пробілів.", self.cancel_keyboard())
+                st["awaiting_mode_name"] = False
+                return
+            
+            existing = self.client.get_available_modes()
+            if mode_name in existing:
+                await safe_send(message, f"❌ Режим '{mode_name}' вже існує!", self.cancel_keyboard())
+                st["awaiting_mode_name"] = False
+                return
+            
+            st["temp_mode_name"] = mode_name
+            st["awaiting_mode_name"] = False
+            st["awaiting_mode_instruction"] = True
+            
+            await safe_send(
+                message,
+                f"✅ Назва: *{mode_name}*\n\n"
+                f"Тепер введіть *інструкцію* для цього режиму:\n"
+                f"_Наприклад: Ти професор математики, пояснюй складні формули просто_",
+                self.cancel_keyboard(),
+                parse_mode=ParseMode.MARKDOWN
+            )
+
+        @self.router.message(lambda m: self.state(m.from_user.id)["awaiting_mode_instruction"])
+        async def add_mode_get_instruction(message: Message):
+            user_id = message.from_user.id
+            st = self.state(user_id)
+            
+            instruction = message.text.strip()
+            mode_name = st["temp_mode_name"]
+            
+            if not instruction:
+                await safe_send(message, "❌ Інструкція не може бути порожньою!", self.cancel_keyboard())
+                return
+            
+            try:
+                await self.bot.delete_message(message.chat.id, message.message_id)
+            except:
+                pass
+            
+            status_msg = await message.answer(f"{LOADING_ICON} Додаю режим...")
+            
+            success = self.client.add_mode(mode_name, instruction)
+            
+            if success:
+                await status_msg.edit_text(
+                    f"✅ *Режим '{mode_name}' успішно додано!*\n\n"
+                    f"📝 Інструкція: {instruction[:100]}...\n\n"
+                    f"_Режим буде доступний до наступного перезапуску Render_",
+                    parse_mode=ParseMode.MARKDOWN
+                )
+            else:
+                await status_msg.edit_text("❌ Помилка при додаванні режиму")
+            
+            st["awaiting_mode_instruction"] = False
+            st["temp_mode_name"] = None
 
         @self.router.message(F.text == "❌ Видалити режим")
         async def delete_mode_prompt(message: Message):
@@ -870,7 +931,7 @@ class TelegramBot:
             if self.client.delete_mode(mode):
                 await callback.message.edit_text(f"✅ Режим '{mode}' видалено")
             else:
-                await callback.message.edit_text(f"❌ Помилка")
+                await callback.message.edit_text(f"❌ Помилка при видаленні")
             
             await callback.answer()
 
