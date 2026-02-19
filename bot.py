@@ -200,36 +200,30 @@ class TelegramBot:
         
         return ReplyKeyboardMarkup(keyboard=keyboard, resize_keyboard=True)
 
-def classes_keyboard(self, user_id=None):
-    classes = ALL_CLASSES
-    print(f"📚 Завантажено класів з ALL_CLASSES: {len(classes)}")
-    print(f"📋 Список класів: {classes}")
-    
-    st = self.state(user_id) if user_id else None
-    show_donate = st and not st.get("is_donor", False)
-    
-    keyboard = []
-    row = []
-    
-    # Правильне сортування класів
-    sorted_classes = sorted(classes, key=lambda x: (int(x.split('-')[0]), x))
-    print(f"📋 Відсортовані класи: {sorted_classes}")
-    
-    for i, class_name in enumerate(sorted_classes, 1):
-        row.append(KeyboardButton(text=f"{CLASS_ICON}{class_name}"))
-        if i % 4 == 0:
+    def classes_keyboard(self, user_id=None):
+        classes = ALL_CLASSES
+        st = self.state(user_id) if user_id else None
+        show_donate = st and not st.get("is_donor", False)
+        
+        keyboard = []
+        row = []
+        
+        sorted_classes = sorted(classes, key=lambda x: (int(x.split('-')[0]), x))
+        
+        for i, class_name in enumerate(sorted_classes, 1):
+            row.append(KeyboardButton(text=f"{CLASS_ICON}{class_name}"))
+            if i % 4 == 0:
+                keyboard.append(row)
+                row = []
+        if row:
             keyboard.append(row)
-            row = []
-    if row:
-        keyboard.append(row)
-    
-    row_last = [KeyboardButton(text=f"{BACK_ICON} Назад")]
-    if show_donate:
-        row_last.insert(0, KeyboardButton(text=f"{DONATE_ICON} Підтримати"))
-    keyboard.append(row_last)
-    
-    print(f"✅ Створено клавіатуру з {len(sorted_classes)} класами")
-    return ReplyKeyboardMarkup(keyboard=keyboard, resize_keyboard=True)
+        
+        row_last = [KeyboardButton(text=f"{BACK_ICON} Назад")]
+        if show_donate:
+            row_last.insert(0, KeyboardButton(text=f"{DONATE_ICON} Підтримати"))
+        keyboard.append(row_last)
+        
+        return ReplyKeyboardMarkup(keyboard=keyboard, resize_keyboard=True)
 
     def days_keyboard(self, class_name, user_id=None):
         st = self.state(user_id) if user_id else None
@@ -835,6 +829,8 @@ def classes_keyboard(self, user_id=None):
                     failed += 1
             
             await safe_send(message, f"✅ Розсилка завершена!\n\nВідправлено: {sent}\nПомилок: {failed}", self.admin_keyboard())
+
+        # ========== КЕРУВАННЯ РЕЖИМАМИ AI ==========
 
         @self.router.message(F.text == "🤖 Керування режимами AI")
         async def ai_management(message: Message):
