@@ -16,5 +16,5 @@ async def main():
     
     await bot.start_polling()
 
-
-asyncio.run(main())
+if __name__ == "__main__":
+    asyncio.run(main())

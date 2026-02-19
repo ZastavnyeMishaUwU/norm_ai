@@ -9,7 +9,7 @@ from aiogram.filters import Command
 from aiogram.types import Message, ReplyKeyboardMarkup, KeyboardButton, CallbackQuery, InlineKeyboardMarkup, InlineKeyboardButton
 
 from config import *
-from utils import loading_animation, split_chunks, safe_send
+from utils import loading_animation, split_chunks, safe_send, format_ai_response
 from geminiclient import GeminiClient
 
 class TelegramBot:
@@ -163,8 +163,6 @@ class TelegramBot:
         day_name = DAYS_UA_REVERSE.get(day_key, "")
         schedule = self.get_schedule_for_class_day(class_name, day_key)
         return schedule.replace(f"{day_name}", f"ЗАВТРА ({day_name})")
-
-    # ========== КЛАВІАТУРИ ==========
 
     def main_keyboard(self, user_id=None):
         st = self.state(user_id) if user_id else None
@@ -338,8 +336,6 @@ class TelegramBot:
                 [InlineKeyboardButton(text="✅ Я задонатив", callback_data="donate_done")]
             ]
         )
-
-    # ========== ХЕНДЛЕРИ ==========
 
     def setup_handlers(self):
         
@@ -519,8 +515,6 @@ class TelegramBot:
             await callback.message.edit_text(f"{DONATE_ICON} Дякуємо! Адмін перевірить платіж.")
             await callback.answer()
 
-        # ========== ДЗВІНКИ ==========
-
         @self.router.message(F.text.contains(f"{BELL_ICON} Дзвінки"))
         async def bells_menu(message: Message):
             user_id = message.from_user.id
@@ -544,38 +538,38 @@ class TelegramBot:
             
             if shift == 1:
                 bells_text = (
-                    f"{BELL_ICON} *🇦 І зміна*\n\n"
-                    f"*1.* 08:00–08:35\n"
+                    f"{BELL_ICON} *І зміна*\n\n"
+                    f"*1*\\. 08:00–08:35\n"
                     f"   └ перерва 10 хв\n"
-                    f"*2.* 08:45–09:20\n"
+                    f"*2*\\. 08:45–09:20\n"
                     f"   └ перерва 10 хв\n"
-                    f"*3.* 09:30–10:05\n"
+                    f"*3*\\. 09:30–10:05\n"
                     f"   └ перерва 10 хв\n"
-                    f"*4.* 10:15–10:50\n"
+                    f"*4*\\. 10:15–10:50\n"
                     f"   └ перерва 10 хв\n"
-                    f"*5.* 11:00–11:35\n"
+                    f"*5*\\. 11:00–11:35\n"
                     f"   └ перерва 15 хв\n"
-                    f"*6.* 11:50–12:25\n"
+                    f"*6*\\. 11:50–12:25\n"
                     f"   └ перерва 10 хв\n"
-                    f"*7.* 12:35–13:10\n"
+                    f"*7*\\. 12:35–13:10\n"
                     f"   └ перерва 15 хв"
                 )
             else:
                 bells_text = (
-                    f"{BELL_ICON} *🇧 ІІ зміна*\n\n"
-                    f"*0.* 12:35–13:10 (підготовчий)\n"
+                    f"{BELL_ICON} *ІІ зміна*\n\n"
+                    f"*0*\\. 12:35–13:10 (підготовчий)\n"
                     f"   └ перерва 15 хв\n"
-                    f"*1.* 13:25–14:00\n"
+                    f"*1*\\. 13:25–14:00\n"
                     f"   └ перерва 10 хв\n"
-                    f"*2.* 14:10–14:45\n"
+                    f"*2*\\. 14:10–14:45\n"
                     f"   └ перерва 10 хв\n"
-                    f"*3.* 14:55–15:30\n"
+                    f"*3*\\. 14:55–15:30\n"
                     f"   └ перерва 10 хв\n"
-                    f"*4.* 15:40–16:15\n"
+                    f"*4*\\. 15:40–16:15\n"
                     f"   └ перерва 5 хв\n"
-                    f"*5.* 16:20–16:55\n"
+                    f"*5*\\. 16:20–16:55\n"
                     f"   └ перерва 5 хв\n"
-                    f"*6.* 17:00–17:35"
+                    f"*6*\\. 17:00–17:35"
                 )
             
             await message.answer(bells_text, reply_markup=self.bells_result_keyboard(), parse_mode=ParseMode.MARKDOWN)
@@ -588,8 +582,6 @@ class TelegramBot:
                 self.bells_keyboard(),
                 parse_mode=ParseMode.MARKDOWN
             )
-
-        # ========== AI ПОМІЧНИК ==========
 
         @self.router.message(F.text.contains(f"{AI_ICON} AI Помічник"))
         async def ai_assistant(message: Message):
@@ -624,8 +616,6 @@ class TelegramBot:
             st = self.state(user_id)
             st["detail_next"] = False
             await safe_send(message, "🧹 Контекст очищено", self.ai_keyboard(user_id))
-
-        # ========== РОЗКЛАД ==========
 
         @self.router.message(F.text.contains(f"{SCHEDULE_ICON} Розклад"))
         async def schedule_start(message: Message):
@@ -735,8 +725,6 @@ class TelegramBot:
                     await safe_send(message, chunk, self.schedule_result_keyboard(user_id))
             else:
                 await safe_send(message, schedule_text, self.schedule_result_keyboard(user_id))
-
-        # ========== АДМІН КОМАНДИ ==========
 
         @self.router.message(F.text == "📊 Статистика")
         async def admin_stats(message: Message):
@@ -856,8 +844,6 @@ class TelegramBot:
                     failed += 1
             
             await safe_send(message, f"✅ Розсилка завершена!\n\nВідправлено: {sent}\nПомилок: {failed}", self.admin_keyboard())
-
-        # ========== КЕРУВАННЯ РЕЖИМАМИ AI ==========
 
         @self.router.message(F.text == "🤖 Керування режимами AI")
         async def ai_management(message: Message):
@@ -1008,8 +994,6 @@ class TelegramBot:
             await callback.message.delete()
             await callback.answer()
 
-        # ========== ОСНОВНИЙ ЧАТ ==========
-
         @self.router.message()
         async def ai_chat(message: Message):
             text = (message.text or "").strip()
@@ -1033,10 +1017,10 @@ class TelegramBot:
 
         if do_detail:
             max_tokens = DETAIL_MAX_TOKENS
-            length_rule = "Відповідь детально, розгорнуто."
+            length_rule = "Відповідь детально, розгорнуто. Використовуй заголовки, списки, жирний текст."
         else:
             max_tokens = SHORT_MAX_TOKENS
-            length_rule = "Відповідь коротко, по суті."
+            length_rule = "Відповідь коротко, по суті. Використовуй списки для ключових пунктів."
 
         prompt = f"{length_rule}\n\nЗапит: {text}"
 
@@ -1055,9 +1039,9 @@ class TelegramBot:
 
         if response and len(response) > 4000:
             for chunk in split_chunks(response, 4000):
-                await safe_send(message, chunk, self.ai_keyboard(message.from_user.id))
+                await safe_send(message, chunk, self.ai_keyboard(message.from_user.id), parse_mode=ParseMode.MARKDOWN)
         else:
-            await safe_send(message, response or "❌ Немає відповіді", self.ai_keyboard(message.from_user.id))
+            await safe_send(message, response or "❌ Немає відповіді", self.ai_keyboard(message.from_user.id), parse_mode=ParseMode.MARKDOWN)
 
     async def drop_pending_updates(self):
         try:

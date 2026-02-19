@@ -27,6 +27,45 @@ def split_chunks(text: str, size: int = 3900):
     for i in range(0, len(text), size):
         yield text[i:i + size]
 
+def escape_markdown(text: str) -> str:
+    """Екранує спеціальні символи для Telegram Markdown"""
+    if not text:
+        return ""
+    special_chars = ['_', '*', '[', ']', '(', ')', '~', '`', '>', '#', '+', '-', '=', '|', '{', '}', '.', '!']
+    for char in special_chars:
+        text = text.replace(char, f'\\{char}')
+    return text
+
+def format_ai_response(text: str) -> str:
+    """Форматує відповідь AI для красивого виведення"""
+    if not text:
+        return ""
+    
+    lines = text.split('\n')
+    formatted_lines = []
+    
+    for line in lines:
+        if line.startswith('# '):
+            formatted_lines.append(f"*{line[2:]}*")
+        elif line.startswith('## '):
+            formatted_lines.append(f"*{line[3:]}*")
+        elif line.startswith('### '):
+            formatted_lines.append(f"*{line[4:]}*")
+        elif line.startswith('- ') or line.startswith('* '):
+            formatted_lines.append(f"• {line[2:]}")
+        elif re.match(r'^\d+\. ', line):
+            parts = line.split('. ', 1)
+            if len(parts) == 2:
+                formatted_lines.append(f"{parts[0]}\\. {parts[1]}")
+            else:
+                formatted_lines.append(line)
+        elif '**' in line:
+            formatted_lines.append(line.replace('**', '*'))
+        else:
+            formatted_lines.append(line)
+    
+    return '\n'.join(formatted_lines)
+
 async def safe_send(message: Message, text: str, reply_markup=None, parse_mode=None):
     """Безпечна відправка з підтримкою маркдауну"""
     try:
@@ -36,8 +75,7 @@ async def safe_send(message: Message, text: str, reply_markup=None, parse_mode=N
             await message.answer(text, reply_markup=reply_markup)
     except Exception as e:
         try:
-            # Якщо маркдаун падає - відправляємо без нього
-            plain_text = re.sub(r'[*_`\\[\\]()~>#+=|{}.!-]', '', text)
-            await message.answer(plain_text[:4000], reply_markup=reply_markup)
+            clean_text = re.sub(r'[*_`\\[\\]()~>#+=|{}.!-]', '', text)
+            await message.answer(clean_text[:4000], reply_markup=reply_markup)
         except:
             await message.answer("❌ Помилка відправки", reply_markup=reply_markup)

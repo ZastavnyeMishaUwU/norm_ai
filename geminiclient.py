@@ -1,5 +1,6 @@
 import os
 import json
+import re
 from google import genai
 
 class GeminiClient:
@@ -16,8 +17,8 @@ class GeminiClient:
                 return json.load(f)
         except FileNotFoundError:
             default = {
-                "assistant": "Ти корисний універсальний асистент. Відповідай коротко і по суті.",
-                "programmer": "Ти senior Python developer. Допомагай з кодом, давай приклади."
+                "assistant": "Ти корисний універсальний асистент. Відповідай українською мовою. Використовуй форматування: # для заголовків, - для списків, **жирний** для важливого.",
+                "programmer": "Ти senior Python developer. Відповідай українською мовою. Використовуй форматування: # для заголовків, - для списків, **жирний** для важливого, `код` для прикладів."
             }
             self._save_instructions(default)
             return default
@@ -47,10 +48,39 @@ class GeminiClient:
             return self._save_instructions(data)
         return False
 
+    def format_response(self, text: str) -> str:
+        """Форматує відповідь для красивого виведення"""
+        if not text:
+            return ""
+        
+        lines = text.split('\n')
+        formatted = []
+        
+        for line in lines:
+            if line.startswith('# '):
+                formatted.append(f"*{line[2:]}*")
+            elif line.startswith('## '):
+                formatted.append(f"*{line[3:]}*")
+            elif line.startswith('### '):
+                formatted.append(f"*{line[4:]}*")
+            elif line.startswith('- '):
+                formatted.append(f"• {line[2:]}")
+            elif line.startswith('* ') and not line.startswith('**'):
+                formatted.append(f"• {line[2:]}")
+            elif '**' in line:
+                formatted.append(line.replace('**', '*'))
+            else:
+                formatted.append(line)
+        
+        return '\n'.join(formatted)
+
     def ask(self, prompt: str, mode: str = "assistant", max_output_tokens: int = 420, temperature: float = 0.4) -> str:
         try:
             instructions = self._load_instructions()
             system_instruction = instructions.get(mode, instructions.get("assistant", ""))
+            
+            format_instruction = "\n\nВикористовуй форматування: # заголовки, - списки, **жирний**, `код`."
+            system_instruction += format_instruction
 
             config = {"system_instruction": system_instruction}
             resp = self.client.models.generate_content(
@@ -58,7 +88,10 @@ class GeminiClient:
                 contents=prompt,
                 config=config,
             )
-            return resp.text if getattr(resp, "text", None) else "Порожня відповідь."
+            
+            response = resp.text if getattr(resp, "text", None) else "Порожня відповідь."
+            return self.format_response(response)
+            
         except Exception as e:
             if "429" in str(e):
                 return "Ліміт вичерпано. Почекай і повтори."

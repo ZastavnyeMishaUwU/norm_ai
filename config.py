@@ -11,7 +11,6 @@ BELLS_FILE = 'bells_schedule.json'
 INSTRUCTIONS_FILE = 'instructions.json'
 ELEMENTARY_SCHEDULE_FILE = 'elementary_schedule.json'
 
-# Прості символи
 CLASS_ICON = "● "
 DAY_ICON = "▶ "
 BACK_ICON = "◀ "
