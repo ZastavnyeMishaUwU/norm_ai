@@ -1,5 +1,5 @@
 import json
-from config import *
+from config import SCHEDULE_FILE, ELEMENTARY_SCHEDULE_FILE, BELLS_FILE, SHIFT_1_CLASSES, SHIFT_2_CLASSES, DAYS_UA, DAYS_UA_REVERSE, BELL_ICON, SCHEDULE_ICON, SHIFTS
 from datetime import datetime
 
 class ScheduleParser:
@@ -59,102 +59,105 @@ class ScheduleParser:
     
     def format_bells_schedule(self, shift=1):
         bells = self.get_bells_schedule(shift)
-        if not bells:
+        if not bells or not bells.get('lessons'):
             return f"{BELL_ICON} Розклад дзвінків не знайдено"
         
-        result = f"{BELL_ICON} *{bells.get('name', f'{shift} зміна')}*\n\n"
+        shift_name = SHIFTS.get(str(shift), f"{shift} зміна")
+        result = f"{BELL_ICON} {shift_name}\n\n"
+        
         for lesson in bells.get('lessons', []):
-            num = lesson['number']
-            start = lesson['start']
-            end = lesson['end']
-            break_time = lesson['break']
+            num = lesson.get('number', '?')
+            start = lesson.get('start', '--:--')
+            end = lesson.get('end', '--:--')
+            break_time = lesson.get('break', 0)
             
             if num == 0:
-                result += f"*0.* {start}–{end} (підготовчий)\n"
+                result += f"0. {start}–{end} (підготовчий)\n"
             else:
-                result += f"*{num}.* {start}–{end}\n"
-            if break_time > 0 and num < 6:
+                result += f"{num}. {start}–{end}\n"
+            
+            if break_time > 0 and num not in [0, 6, 7]:
                 result += f"   └ перерва {break_time} хв\n"
+        
         return result
     
     def get_schedule_for_class_day(self, class_name, day_key):
-        if not self.main_schedule or 'schedule' not in self.main_schedule:
-            return "❌ Розклад не знайдено"
+        if not class_name or not day_key:
+            return "❌ Помилка: не вибрано клас або день"
         
-        schedule_day = self.main_schedule['schedule'].get(day_key, [])
+        schedule_day = self.main_schedule.get('schedule', {}).get(day_key, [])
         if not schedule_day:
             day_name = DAYS_UA_REVERSE.get(day_key, day_key)
             return f"📭 На {day_name} розкладу немає"
         
         shift = self.get_shift_for_class(class_name)
         shift_text = f" ({SHIFTS[str(shift)]})" if shift else ""
+        day_name = DAYS_UA_REVERSE.get(day_key, day_key)
         
-        result = f"{SCHEDULE_ICON} *{class_name}* — {DAYS_UA_REVERSE.get(day_key, day_key)}{shift_text}\n\n"
+        result = f"{SCHEDULE_ICON} {class_name} — {day_name}{shift_text}\n\n"
         
         found = False
         for lesson in schedule_day:
-            lesson_num = lesson.get('lesson_number', '?')
+            lesson_num = lesson.get('lesson_number')
             class_info = lesson.get('classes', {}).get(class_name, {})
             
             if class_info and class_info.get('subject'):
                 subject = class_info['subject']
                 room = class_info.get('room', '')
                 room_str = f" (каб. {room})" if room else ""
-                result += f"*{lesson_num}.* {subject}{room_str}\n"
+                result += f"{lesson_num}. {subject}{room_str}\n"
                 found = True
         
         if not found:
-            result += "Уроків немає\n"
+            result += "Немає уроків\n"
         
         return result
     
     def get_full_schedule_for_class(self, class_name):
-        if not self.main_schedule or 'schedule' not in self.main_schedule:
-            return "❌ Розклад не знайдено"
+        if not class_name:
+            return "❌ Помилка: не вибрано клас"
         
         shift = self.get_shift_for_class(class_name)
         shift_text = f" ({SHIFTS[str(shift)]})" if shift else ""
         
-        result = f"{SCHEDULE_ICON} *Повний розклад — {class_name}*{shift_text}\n\n"
+        result = f"{SCHEDULE_ICON} Повний розклад — {class_name}{shift_text}\n\n"
         
         for day_key, day_name in DAYS_UA.items():
-            result += f"▬▬▬ *{day_name}* ▬▬▬\n"
-            schedule_day = self.main_schedule['schedule'].get(day_key, [])
+            result += f"——— {day_name} ———\n"
+            schedule_day = self.main_schedule.get('schedule', {}).get(day_key, [])
             
             found = False
             for lesson in schedule_day:
-                lesson_num = lesson.get('lesson_number', '?')
+                lesson_num = lesson.get('lesson_number')
                 class_info = lesson.get('classes', {}).get(class_name, {})
                 
                 if class_info and class_info.get('subject'):
                     subject = class_info['subject']
                     room = class_info.get('room', '')
                     room_str = f" (каб. {room})" if room else ""
-                    result += f"  *{lesson_num}.* {subject}{room_str}\n"
+                    result += f"  {lesson_num}. {subject}{room_str}\n"
                     found = True
             
             if not found:
-                result += "  _Немає уроків_\n"
+                result += "  Немає уроків\n"
             result += "\n"
         
         return result
     
     def get_schedule_for_today(self, class_name):
-        import datetime
-        today = datetime.datetime.now().weekday()
+        today = datetime.now().weekday()
         days_map = {0: "monday", 1: "tuesday", 2: "wednesday", 
                    3: "thursday", 4: "friday", 5: "monday", 6: "monday"}
         day_key = days_map[today]
         day_name = DAYS_UA_REVERSE.get(day_key, "")
         schedule = self.get_schedule_for_class_day(class_name, day_key)
-        return schedule.replace(f"{DAYS_UA_REVERSE.get(day_key, day_key)}", f"📆 *СЬОГОДНІ* ({day_name})")
+        return schedule.replace(f"{day_name}", f"СЬОГОДНІ ({day_name})")
     
     def get_schedule_for_tomorrow(self, class_name):
-        import datetime
-        tomorrow = (datetime.datetime.now().weekday() + 1) % 7
+        tomorrow = (datetime.now().weekday() + 1) % 7
         days_map = {0: "monday", 1: "tuesday", 2: "wednesday", 
                    3: "thursday", 4: "friday", 5: "monday", 6: "monday"}
         day_key = days_map[tomorrow]
         day_name = DAYS_UA_REVERSE.get(day_key, "")
         schedule = self.get_schedule_for_class_day(class_name, day_key)
-        return schedule.replace(f"{DAYS_UA_REVERSE.get(day_key, day_key)}", f"📅 *ЗАВТРА* ({day_name})")
+        return schedule.replace(f"{day_name}", f"ЗАВТРА ({day_name})")

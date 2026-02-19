@@ -4,7 +4,7 @@ from collections import defaultdict
 from datetime import datetime
 
 from aiogram import Bot, Dispatcher, Router, F
-from aiogram.enums import ChatAction, ParseMode
+from aiogram.enums import ChatAction
 from aiogram.filters import Command
 from aiogram.types import Message, ReplyKeyboardMarkup, KeyboardButton, CallbackQuery, InlineKeyboardMarkup, InlineKeyboardButton
 
@@ -88,7 +88,9 @@ class TelegramBot:
         if not bells or not bells.get('lessons'):
             return f"{BELL_ICON} Розклад дзвінків не знайдено"
         
-        result = f"{BELL_ICON} {bells.get('name', f'{shift} зміна')}\n\n"
+        shift_name = SHIFTS.get(str(shift), f"{shift} зміна")
+        result = f"{BELL_ICON} {shift_name}\n\n"
+        
         for lesson in bells.get('lessons', []):
             num = lesson.get('number', '?')
             start = lesson.get('start', '--:--')
@@ -99,8 +101,10 @@ class TelegramBot:
                 result += f"0. {start}–{end} (підготовчий)\n"
             else:
                 result += f"{num}. {start}–{end}\n"
+            
             if break_time > 0 and num not in [0, 6, 7]:
                 result += f"   └ перерва {break_time} хв\n"
+        
         return result
 
     def get_schedule_for_class_day(self, class_name, day_key):
@@ -212,7 +216,8 @@ class TelegramBot:
         if row:
             keyboard.append(row)
         keyboard.append([KeyboardButton(text="Детально"), KeyboardButton(text="Очистити")])
-        keyboard.append([KeyboardButton(text=f"{MENU_ICON} Головне меню")])
+        keyboard.append([KeyboardButton(text=f"{BACK_ICON} Назад"), 
+                        KeyboardButton(text=f"{MENU_ICON} Головне меню")])
         return ReplyKeyboardMarkup(keyboard=keyboard, resize_keyboard=True)
 
     def schedule_main_keyboard(self, user_id=None):
@@ -225,7 +230,8 @@ class TelegramBot:
             [KeyboardButton(text=f"{BELL_ICON} Дзвінки")]
         ]
         
-        row4 = [KeyboardButton(text=f"{MENU_ICON} Головне меню")]
+        row4 = [KeyboardButton(text=f"{BACK_ICON} Назад"), 
+                KeyboardButton(text=f"{MENU_ICON} Головне меню")]
         if show_donate:
             row4.insert(0, KeyboardButton(text=f"{DONATE_ICON} Підтримати"))
         keyboard.append(row4)
@@ -267,7 +273,8 @@ class TelegramBot:
             [KeyboardButton(text=f"{DAY_ICON} П'ятниця")]
         ]
         
-        row3 = [KeyboardButton(text=f"{BACK_ICON} Інший клас")]
+        row3 = [KeyboardButton(text=f"{BACK_ICON} Інший клас"), 
+                KeyboardButton(text=f"{BACK_ICON} Назад")]
         if show_donate:
             row3.insert(0, KeyboardButton(text=f"{DONATE_ICON} Підтримати"))
         keyboard.append(row3)
@@ -287,7 +294,8 @@ class TelegramBot:
              KeyboardButton(text=f"{BELL_ICON} Дзвінки")]
         ]
         
-        row4 = [KeyboardButton(text=f"{MENU_ICON} Головне меню")]
+        row4 = [KeyboardButton(text=f"{BACK_ICON} Назад"), 
+                KeyboardButton(text=f"{MENU_ICON} Головне меню")]
         if show_donate:
             row4.insert(0, KeyboardButton(text=f"{DONATE_ICON} Підтримати"))
         keyboard.append(row4)
@@ -302,7 +310,8 @@ class TelegramBot:
                 [KeyboardButton(text="📢 Розсилка"), 
                  KeyboardButton(text="👥 Активні")],
                 [KeyboardButton(text="🤖 Керування режимами AI")],
-                [KeyboardButton(text=f"{MENU_ICON} Головне меню")]
+                [KeyboardButton(text=f"{BACK_ICON} Назад"), 
+                 KeyboardButton(text=f"{MENU_ICON} Головне меню")]
             ],
             resize_keyboard=True
         )
@@ -313,7 +322,27 @@ class TelegramBot:
                 [KeyboardButton(text="📋 Список режимів")],
                 [KeyboardButton(text="➕ Додати новий режим")],
                 [KeyboardButton(text="❌ Видалити режим")],
-                [KeyboardButton(text="🔙 Назад до адмінки")]
+                [KeyboardButton(text=f"{BACK_ICON} Назад до адмінки")]
+            ],
+            resize_keyboard=True
+        )
+
+    def bells_keyboard(self):
+        return ReplyKeyboardMarkup(
+            keyboard=[
+                [KeyboardButton(text="🇦 І зміна"), KeyboardButton(text="🇧 ІІ зміна")],
+                [KeyboardButton(text=f"{BACK_ICON} Назад"), 
+                 KeyboardButton(text=f"{MENU_ICON} Головне меню")]
+            ],
+            resize_keyboard=True
+        )
+
+    def bells_result_keyboard(self):
+        return ReplyKeyboardMarkup(
+            keyboard=[
+                [KeyboardButton(text=f"{BELL_ICON} Інша зміна")],
+                [KeyboardButton(text=f"{BACK_ICON} Назад"), 
+                 KeyboardButton(text=f"{MENU_ICON} Головне меню")]
             ],
             resize_keyboard=True
         )
@@ -351,10 +380,10 @@ class TelegramBot:
             
             welcome_text = (
                 f"{MENU_ICON} Вітаю в боті 12-го ліцею!\n\n"
-                f"{AI_ICON} AI Помічник\n"
-                f"{SCHEDULE_ICON} Розклад (1-11 класи)\n"
-                f"{BELL_ICON} Розклад дзвінків\n"
-                f"{DONATE_ICON} Підтримка проекту\n\n"
+                f"{AI_ICON} AI Помічник - різні режими\n"
+                f"{SCHEDULE_ICON} Розклад - 1-11 класи\n"
+                f"{BELL_ICON} Дзвінки - І та ІІ зміна\n"
+                f"{DONATE_ICON} Підтримати проект\n\n"
                 f"Оберіть опцію в меню:"
             )
             
@@ -437,6 +466,15 @@ class TelegramBot:
                 st["selected_class"] = None
                 st["selected_day"] = None
                 await safe_send(message, f"{SCHEDULE_ICON} Розклад", self.schedule_main_keyboard(user_id))
+            elif st["current_menu"] == "ai":
+                st["selected_class"] = None
+                st["selected_day"] = None
+                await safe_send(message, f"{AI_ICON} AI Помічник", self.ai_keyboard(user_id))
+            elif st["current_menu"] == "admin":
+                await safe_send(message, f"{ADMIN_ICON} Адмін-панель", self.admin_keyboard())
+            elif st["current_menu"] == "ai_management":
+                st["current_menu"] = "admin"
+                await safe_send(message, f"{ADMIN_ICON} Адмін-панель", self.admin_keyboard())
             else:
                 await safe_send(message, f"{MENU_ICON} Головне меню", self.main_keyboard(user_id))
 
@@ -481,7 +519,11 @@ class TelegramBot:
                 return
             
             await message.answer(
-                f"{DONATE_ICON} Підтримати\n\n1. Перейдіть за посиланням\n2. Зробіть донат\n3. В описі вкажіть ID: {user_id}",
+                f"{DONATE_ICON} Підтримати проект\n\n"
+                f"1. Перейдіть за посиланням\n"
+                f"2. Зробіть донат від 50 грн\n"
+                f"3. В описі вкажіть ID: {user_id}\n"
+                f"4. Натисніть «Я задонатив»",
                 reply_markup=self.donate_keyboard()
             )
 
@@ -498,44 +540,35 @@ class TelegramBot:
             await callback.answer()
 
         @self.router.message(F.text.contains(f"{BELL_ICON} Дзвінки"))
-        async def bells_schedule(message: Message):
+        async def bells_menu(message: Message):
             user_id = message.from_user.id
             st = self.state(user_id)
+            
+            await safe_send(
+                message,
+                f"{BELL_ICON} Розклад дзвінків\n\nОберіть зміну:",
+                self.bells_keyboard()
+            )
+
+        @self.router.message(F.text.in_(["🇦 І зміна", "🇧 ІІ зміна"]))
+        async def show_bells(message: Message):
+            user_id = message.from_user.id
+            st = self.state(user_id)
+            
+            shift = 1 if message.text == "🇦 І зміна" else 2
             
             await loading_animation(message, "Завантаження")
-            
-            shift = 1
-            if st.get("selected_class"):
-                shift = self.get_shift_for_class(st["selected_class"])
-            else:
-                shift = 2 if datetime.now().hour >= 12 else 1
-            
             bells_text = self.format_bells_schedule(shift)
             
-            keyboard = ReplyKeyboardMarkup(
-                keyboard=[
-                    [KeyboardButton(text=f"{BACK_ICON} Назад до розкладу")],
-                    [KeyboardButton(text=f"{MENU_ICON} Головне меню")]
-                ],
-                resize_keyboard=True
-            )
-            
-            await safe_send(message, bells_text, keyboard)
+            await safe_send(message, bells_text, self.bells_result_keyboard())
 
-        @self.router.message(F.text == f"{BACK_ICON} Назад до розкладу")
-        async def back_to_schedule(message: Message):
-            user_id = message.from_user.id
-            st = self.state(user_id)
-            st["current_menu"] = "schedule"
-            
-            if st.get("selected_class"):
-                await safe_send(
-                    message,
-                    f"{SCHEDULE_ICON} Клас: {st['selected_class']}\n\nОберіть день:",
-                    self.days_keyboard(st['selected_class'], user_id)
-                )
-            else:
-                await safe_send(message, f"{SCHEDULE_ICON} Розклад", self.schedule_main_keyboard(user_id))
+        @self.router.message(F.text == f"{BELL_ICON} Інша зміна")
+        async def other_bells(message: Message):
+            await safe_send(
+                message,
+                f"{BELL_ICON} Розклад дзвінків\n\nОберіть зміну:",
+                self.bells_keyboard()
+            )
 
         @self.router.message(F.text.contains(f"{AI_ICON} AI Помічник"))
         async def ai_assistant(message: Message):
@@ -562,14 +595,14 @@ class TelegramBot:
             user_id = message.from_user.id
             st = self.state(user_id)
             st["detail_next"] = True
-            await safe_send(message, "✅ Наступна відповідь детально", self.ai_keyboard(user_id))
+            await safe_send(message, "✅ Наступна відповідь буде детальною", self.ai_keyboard(user_id))
 
         @self.router.message(F.text == "Очистити")
         async def clear_mode(message: Message):
             user_id = message.from_user.id
             st = self.state(user_id)
             st["detail_next"] = False
-            await safe_send(message, "🧹 Очищено", self.ai_keyboard(user_id))
+            await safe_send(message, "🧹 Контекст очищено", self.ai_keyboard(user_id))
 
         @self.router.message(F.text.contains(f"{SCHEDULE_ICON} Розклад"))
         async def schedule_start(message: Message):
@@ -604,9 +637,12 @@ class TelegramBot:
             st["selected_class"] = class_name
             st["selected_day"] = None
             
+            shift = self.get_shift_for_class(class_name)
+            shift_text = SHIFTS.get(str(shift), "")
+            
             await safe_send(
                 message,
-                f"{SCHEDULE_ICON} Обрано клас: {class_name}\n\nОберіть день:",
+                f"{SCHEDULE_ICON} Обрано клас: {class_name} {shift_text}\n\nОберіть день:",
                 self.days_keyboard(class_name, user_id)
             )
 
@@ -621,6 +657,9 @@ class TelegramBot:
             
             day_name = message.text.replace(DAY_ICON, "").strip()
             day_key = DAYS_UA.get(day_name)
+            
+            if not day_key:
+                return
             
             st["selected_day"] = day_key
             self.stats.schedule_views += 1
@@ -670,7 +709,7 @@ class TelegramBot:
             
             if len(schedule_text) > 4000:
                 for chunk in split_chunks(schedule_text, 4000):
-                    await safe_send(message, chunk, self.schedule_result_keyboard(user_id))
+                    await safe_send(message, chunk, self.schedule_result_keyboard(user_id) if chunk == schedule_text else None)
             else:
                 await safe_send(message, schedule_text, self.schedule_result_keyboard(user_id))
 
@@ -693,13 +732,13 @@ class TelegramBot:
                 await safe_send(
                     message,
                     f"{ADMIN_ICON} Статистика\n\n"
-                    f"🟢 Онлайн: {online_now}\n"
-                    f"📅 Сьогодні: {active_today}\n"
+                    f"🟢 Онлайн зараз: {online_now}\n"
+                    f"📅 Активні сьогодні: {active_today}\n"
                     f"👥 Всього: {total_users}\n"
                     f"📊 Команд: {commands}\n"
                     f"📋 Розклад: {schedule_views}\n"
                     f"🤖 AI: {ai_queries}\n"
-                    f"⏱ Аптайм: {hours}год {minutes}хв\n"
+                    f"⏱ Аптайм: {hours} год {minutes} хв\n"
                     f"💰 Донатерів: {len(self.donors)}"
                 )
 
@@ -710,11 +749,15 @@ class TelegramBot:
             
             if st["current_menu"] == "admin" and st["is_admin"]:
                 online_list = list(self.stats.online_users)[:20]
-                online_text = "\n".join([f"• {uid}" for uid in online_list]) if online_list else "• Немає"
+                online_text = "\n".join([f"• {uid}" for uid in online_list]) if online_list else "• Немає активних"
                 
                 await safe_send(
                     message,
-                    f"👥 Активні\n\n🟢 Зараз: {len(self.stats.online_users)}\n{online_text}\n\n📅 Сьогодні: {len(self.stats.daily_active)}"
+                    f"👥 Активні користувачі\n\n"
+                    f"🟢 Зараз: {len(self.stats.online_users)}\n"
+                    f"{online_text}\n\n"
+                    f"📅 Сьогодні: {len(self.stats.daily_active)}\n"
+                    f"👤 Всього: {self.stats.total_users}"
                 )
 
         @self.router.message(F.text == "🔑 Змінити пароль")
@@ -726,7 +769,7 @@ class TelegramBot:
                 st["awaiting_new_password"] = True
                 await safe_send(
                     message,
-                    f"🔑 Поточний пароль: {self.admins_data['current_password']}\n\nВведіть новий:",
+                    f"🔑 Зміна пароля\n\nПоточний пароль: {self.admins_data['current_password']}\n\nВведіть новий пароль:",
                     self.cancel_keyboard()
                 )
 
@@ -742,7 +785,7 @@ class TelegramBot:
             
             new_pass = message.text.strip()
             if len(new_pass) < 4:
-                await safe_send(message, "❌ Мінімум 4 символи", self.cancel_keyboard())
+                await safe_send(message, "❌ Пароль має бути від 4 символів!", self.cancel_keyboard())
                 return
             
             old = self.admins_data["current_password"]
@@ -764,7 +807,7 @@ class TelegramBot:
             
             if st["current_menu"] == "admin" and st["is_admin"]:
                 st["awaiting_broadcast"] = True
-                await safe_send(message, "📢 Введіть текст для розсилки:", self.cancel_keyboard())
+                await safe_send(message, "📢 Розсилка\n\nВведіть текст для розсилки:", self.cancel_keyboard())
 
         @self.router.message(lambda m: self.state(m.from_user.id)["awaiting_broadcast"])
         async def broadcast_send(message: Message):
@@ -774,18 +817,20 @@ class TelegramBot:
             text = message.text.strip()
             st["awaiting_broadcast"] = False
             
-            await safe_send(message, "📤 Розсилка...")
+            await safe_send(message, f"📤 Розсилка запущена...")
             
             sent = 0
+            failed = 0
+            
             for uid in self.user_state.keys():
                 try:
                     await self.bot.send_message(uid, f"📢 {text}")
                     sent += 1
                     await asyncio.sleep(0.05)
                 except:
-                    pass
+                    failed += 1
             
-            await safe_send(message, f"✅ Відправлено: {sent}", self.admin_keyboard())
+            await safe_send(message, f"✅ Розсилка завершена!\n\nВідправлено: {sent}\nПомилок: {failed}", self.admin_keyboard())
 
         @self.router.message(F.text == "🤖 Керування режимами AI")
         async def ai_management(message: Message):
@@ -800,9 +845,8 @@ class TelegramBot:
                     f"📋 Список режимів\n"
                     f"➕ Додати новий режим\n"
                     f"❌ Видалити режим\n\n"
-                    f"_Режими живуть до перезапуску Render_",
-                    self.ai_management_keyboard(),
-                    parse_mode=ParseMode.MARKDOWN
+                    f"Режими живуть до перезапуску Render",
+                    self.ai_management_keyboard()
                 )
 
         @self.router.message(F.text == "📋 Список режимів")
@@ -812,13 +856,13 @@ class TelegramBot:
             
             if st["current_menu"] == "ai_management" and st["is_admin"]:
                 modes = self.client.get_available_modes()
-                text = f"{AI_ICON} *Доступні режими:*\n\n"
+                text = f"{AI_ICON} Доступні режими:\n\n"
                 for mode in modes:
                     if mode in ["assistant", "programmer"]:
                         text += f"• {mode} (базовий)\n"
                     else:
                         text += f"• {mode}\n"
-                await safe_send(message, text, parse_mode=ParseMode.MARKDOWN)
+                await safe_send(message, text)
 
         @self.router.message(F.text == "➕ Додати новий режим")
         async def add_mode_start(message: Message):
@@ -830,10 +874,9 @@ class TelegramBot:
                 await safe_send(
                     message,
                     f"{AI_ICON} Додавання нового режиму\n\n"
-                    f"Введіть *назву* режиму (наприклад: math, history, physics):\n"
-                    f"_Тільки латиниця, без пробілів_",
-                    self.cancel_keyboard(),
-                    parse_mode=ParseMode.MARKDOWN
+                    f"Введіть назву режиму (наприклад: math, history, physics):\n"
+                    f"Тільки латиниця, без пробілів",
+                    self.cancel_keyboard()
                 )
 
         @self.router.message(lambda m: self.state(m.from_user.id)["awaiting_mode_name"])
@@ -860,11 +903,10 @@ class TelegramBot:
             
             await safe_send(
                 message,
-                f"✅ Назва: *{mode_name}*\n\n"
-                f"Тепер введіть *інструкцію* для цього режиму:\n"
-                f"_Наприклад: Ти професор математики, пояснюй складні формули просто_",
-                self.cancel_keyboard(),
-                parse_mode=ParseMode.MARKDOWN
+                f"✅ Назва: {mode_name}\n\n"
+                f"Тепер введіть інструкцію для цього режиму:\n"
+                f"Наприклад: Ти професор математики, пояснюй складні формули просто",
+                self.cancel_keyboard()
             )
 
         @self.router.message(lambda m: self.state(m.from_user.id)["awaiting_mode_instruction"])
@@ -890,10 +932,9 @@ class TelegramBot:
             
             if success:
                 await status_msg.edit_text(
-                    f"✅ *Режим '{mode_name}' успішно додано!*\n\n"
-                    f"📝 Інструкція: {instruction[:100]}...\n\n"
-                    f"_Режим буде доступний до наступного перезапуску Render_",
-                    parse_mode=ParseMode.MARKDOWN
+                    f"✅ Режим '{mode_name}' успішно додано!\n\n"
+                    f"Інструкція: {instruction[:100]}...\n\n"
+                    f"Режим буде доступний до наступного перезапуску Render"
                 )
             else:
                 await status_msg.edit_text("❌ Помилка при додаванні режиму")
@@ -963,10 +1004,10 @@ class TelegramBot:
 
         if do_detail:
             max_tokens = DETAIL_MAX_TOKENS
-            length_rule = "Відповідь детально."
+            length_rule = "Відповідь детально, розгорнуто."
         else:
             max_tokens = SHORT_MAX_TOKENS
-            length_rule = "Відповідь коротко."
+            length_rule = "Відповідь коротко, по суті."
 
         prompt = f"{length_rule}\n\nЗапит: {text}"
 
@@ -997,6 +1038,9 @@ class TelegramBot:
 
     async def start_polling(self):
         print("✅ Бот запущено")
+        print(f"👑 Адмінів: {len(self.admins_data.get('admins', []))}")
+        print(f"💰 Донатерів: {len(self.donors)}")
         print(f"🤖 Режимів: {len(self.client.get_available_modes())}")
+        
         await self.drop_pending_updates()
         await self.dp.start_polling(self.bot, drop_pending_updates=True)

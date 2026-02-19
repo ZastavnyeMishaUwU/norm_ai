@@ -21,8 +21,7 @@ class GeminiClient:
             }
             self._save_instructions(default)
             return default
-        except Exception as e:
-            print(f"Помилка JSON: {e}")
+        except:
             return {}
 
     def _save_instructions(self, data):
@@ -30,8 +29,7 @@ class GeminiClient:
             with open(self.instructions_file, "w", encoding="utf-8") as f:
                 json.dump(data, f, ensure_ascii=False, indent=4)
             return True
-        except Exception as e:
-            print(f"Помилка збереження: {e}")
+        except:
             return False
 
     def get_available_modes(self):
