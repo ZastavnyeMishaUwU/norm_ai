@@ -9,7 +9,6 @@ ADMINS_FILE = 'admins.json'
 SCHEDULE_FILE = 'schedule_full.json'
 BELLS_FILE = 'bells_schedule.json'
 INSTRUCTIONS_FILE = 'instructions.json'
-ELEMENTARY_SCHEDULE_FILE = 'elementary_schedule.json'
 
 CLASS_ICON = "● "
 DAY_ICON = "▶ "
@@ -38,18 +37,16 @@ SHIFTS = {
     "2": "🇧 ІІ зміна"
 }
 
-SHIFT_1_CLASSES = [
-    "1-А", "1-Б", "1-В", "2-А", "2-Б", "2-В",
-    "7-А", "7-Б", "7-В", "7-Г", "8-А", "8-Б", "8-В", "8-Г",
-    "9-А", "9-Б", "9-В", "10-А", "10-Б", "11-А", "11-Б"
+# ТІЛЬКИ 5-11 КЛАСИ
+ALL_CLASSES = [
+    "5-А", "5-Б", "5-В",
+    "6-А", "6-Б", "6-В",
+    "7-А", "7-Б", "7-В", "7-Г",
+    "8-А", "8-Б", "8-В", "8-Г",
+    "9-А", "9-Б", "9-В",
+    "10-А", "10-Б",
+    "11-А", "11-Б"
 ]
-
-SHIFT_2_CLASSES = [
-    "3-А", "3-Б", "3-В", "4-А", "4-Б", "4-В",
-    "5-А", "5-Б", "5-В", "6-А", "6-Б", "6-В"
-]
-
-ALL_CLASSES = SHIFT_1_CLASSES + SHIFT_2_CLASSES
 
 MONOBANK_URL = "https://send.monobank.ua/jar/96YBXc4K6g"
 

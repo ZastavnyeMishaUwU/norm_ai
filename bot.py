@@ -9,7 +9,7 @@ from aiogram.filters import Command
 from aiogram.types import Message, ReplyKeyboardMarkup, KeyboardButton, CallbackQuery, InlineKeyboardMarkup, InlineKeyboardButton
 
 from config import *
-from utils import loading_animation, split_chunks, safe_send, format_ai_response
+from utils import loading_animation, split_chunks, safe_send
 from geminiclient import GeminiClient
 
 class TelegramBot:
@@ -74,15 +74,6 @@ class TelegramBot:
         
         return self.user_state[user_id]
 
-    def get_shift_for_class(self, class_name):
-        if not class_name:
-            return 1
-        if class_name in SHIFT_1_CLASSES:
-            return 1
-        elif class_name in SHIFT_2_CLASSES:
-            return 2
-        return 1
-
     def get_schedule_for_class_day(self, class_name, day_key):
         if not class_name or not day_key:
             return "❌ Помилка: не вибрано клас або день"
@@ -92,11 +83,9 @@ class TelegramBot:
             day_name = DAYS_UA_REVERSE.get(day_key, day_key)
             return f"📭 На {day_name} розкладу немає"
         
-        shift = self.get_shift_for_class(class_name)
-        shift_text = f" ({SHIFTS[str(shift)]})" if shift else ""
         day_name = DAYS_UA_REVERSE.get(day_key, day_key)
         
-        result = f"{SCHEDULE_ICON} {class_name} — {day_name}{shift_text}\n\n"
+        result = f"{SCHEDULE_ICON} {class_name} — {day_name}\n\n"
         
         found = False
         for lesson in schedule_day:
@@ -119,10 +108,7 @@ class TelegramBot:
         if not class_name:
             return "❌ Помилка: не вибрано клас"
         
-        shift = self.get_shift_for_class(class_name)
-        shift_text = f" ({SHIFTS[str(shift)]})" if shift else ""
-        
-        result = f"{SCHEDULE_ICON} Повний розклад — {class_name}{shift_text}\n\n"
+        result = f"{SCHEDULE_ICON} Повний розклад — {class_name}\n\n"
         
         for day_key, day_name in DAYS_UA.items():
             result += f"——— {day_name} ———\n"
@@ -357,7 +343,7 @@ class TelegramBot:
             welcome_text = (
                 f"{MENU_ICON} Вітаю в боті 12-го ліцею!\n\n"
                 f"{AI_ICON} AI Помічник - різні режими\n"
-                f"{SCHEDULE_ICON} Розклад - 1-11 класи\n"
+                f"{SCHEDULE_ICON} Розклад - 5-11 класи\n"
                 f"{BELL_ICON} Дзвінки - І та ІІ зміна\n"
                 f"{DONATE_ICON} Підтримати проект\n\n"
                 f"Оберіть опцію в меню:"
@@ -650,12 +636,9 @@ class TelegramBot:
             st["selected_class"] = class_name
             st["selected_day"] = None
             
-            shift = self.get_shift_for_class(class_name)
-            shift_text = SHIFTS.get(str(shift), "")
-            
             await safe_send(
                 message,
-                f"{SCHEDULE_ICON} Обрано клас: {class_name} {shift_text}\n\nОберіть день:",
+                f"{SCHEDULE_ICON} Обрано клас: {class_name}\n\nОберіть день:",
                 self.days_keyboard(class_name, user_id)
             )
 
