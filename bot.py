@@ -4,7 +4,7 @@ from collections import defaultdict
 from datetime import datetime
 
 from aiogram import Bot, Dispatcher, Router, F
-from aiogram.enums import ChatAction
+from aiogram.enums import ChatAction, ParseMode
 from aiogram.filters import Command
 from aiogram.types import Message, ReplyKeyboardMarkup, KeyboardButton, CallbackQuery, InlineKeyboardMarkup, InlineKeyboardButton
 
@@ -82,30 +82,6 @@ class TelegramBot:
         elif class_name in SHIFT_2_CLASSES:
             return 2
         return 1
-
-    def format_bells_schedule(self, shift=1):
-        bells = self.bells_data.get(f'shift_{shift}', {})
-        if not bells or not bells.get('lessons'):
-            return f"{BELL_ICON} Розклад дзвінків не знайдено"
-        
-        shift_name = SHIFTS.get(str(shift), f"{shift} зміна")
-        result = f"{BELL_ICON} {shift_name}\n\n"
-        
-        for lesson in bells.get('lessons', []):
-            num = lesson.get('number', '?')
-            start = lesson.get('start', '--:--')
-            end = lesson.get('end', '--:--')
-            break_time = lesson.get('break', 0)
-            
-            if num == 0:
-                result += f"0. {start}–{end} (підготовчий)\n"
-            else:
-                result += f"{num}. {start}–{end}\n"
-            
-            if break_time > 0 and num not in [0, 6, 7]:
-                result += f"   └ перерва {break_time} хв\n"
-        
-        return result
 
     def get_schedule_for_class_day(self, class_name, day_key):
         if not class_name or not day_key:
@@ -187,6 +163,8 @@ class TelegramBot:
         day_name = DAYS_UA_REVERSE.get(day_key, "")
         schedule = self.get_schedule_for_class_day(class_name, day_key)
         return schedule.replace(f"{day_name}", f"ЗАВТРА ({day_name})")
+
+    # ========== КЛАВІАТУРИ ==========
 
     def main_keyboard(self, user_id=None):
         st = self.state(user_id) if user_id else None
@@ -360,6 +338,8 @@ class TelegramBot:
                 [InlineKeyboardButton(text="✅ Я задонатив", callback_data="donate_done")]
             ]
         )
+
+    # ========== ХЕНДЛЕРИ ==========
 
     def setup_handlers(self):
         
@@ -539,6 +519,8 @@ class TelegramBot:
             await callback.message.edit_text(f"{DONATE_ICON} Дякуємо! Адмін перевірить платіж.")
             await callback.answer()
 
+        # ========== ДЗВІНКИ ==========
+
         @self.router.message(F.text.contains(f"{BELL_ICON} Дзвінки"))
         async def bells_menu(message: Message):
             user_id = message.from_user.id
@@ -546,8 +528,9 @@ class TelegramBot:
             
             await safe_send(
                 message,
-                f"{BELL_ICON} Розклад дзвінків\n\nОберіть зміну:",
-                self.bells_keyboard()
+                f"{BELL_ICON} *Розклад дзвінків*\n\nОберіть зміну:",
+                self.bells_keyboard(),
+                parse_mode=ParseMode.MARKDOWN
             )
 
         @self.router.message(F.text.in_(["🇦 І зміна", "🇧 ІІ зміна"]))
@@ -558,17 +541,55 @@ class TelegramBot:
             shift = 1 if message.text == "🇦 І зміна" else 2
             
             await loading_animation(message, "Завантаження")
-            bells_text = self.format_bells_schedule(shift)
             
-            await safe_send(message, bells_text, self.bells_result_keyboard())
+            if shift == 1:
+                bells_text = (
+                    f"{BELL_ICON} *🇦 І зміна*\n\n"
+                    f"*1.* 08:00–08:35\n"
+                    f"   └ перерва 10 хв\n"
+                    f"*2.* 08:45–09:20\n"
+                    f"   └ перерва 10 хв\n"
+                    f"*3.* 09:30–10:05\n"
+                    f"   └ перерва 10 хв\n"
+                    f"*4.* 10:15–10:50\n"
+                    f"   └ перерва 10 хв\n"
+                    f"*5.* 11:00–11:35\n"
+                    f"   └ перерва 15 хв\n"
+                    f"*6.* 11:50–12:25\n"
+                    f"   └ перерва 10 хв\n"
+                    f"*7.* 12:35–13:10\n"
+                    f"   └ перерва 15 хв"
+                )
+            else:
+                bells_text = (
+                    f"{BELL_ICON} *🇧 ІІ зміна*\n\n"
+                    f"*0.* 12:35–13:10 (підготовчий)\n"
+                    f"   └ перерва 15 хв\n"
+                    f"*1.* 13:25–14:00\n"
+                    f"   └ перерва 10 хв\n"
+                    f"*2.* 14:10–14:45\n"
+                    f"   └ перерва 10 хв\n"
+                    f"*3.* 14:55–15:30\n"
+                    f"   └ перерва 10 хв\n"
+                    f"*4.* 15:40–16:15\n"
+                    f"   └ перерва 5 хв\n"
+                    f"*5.* 16:20–16:55\n"
+                    f"   └ перерва 5 хв\n"
+                    f"*6.* 17:00–17:35"
+                )
+            
+            await message.answer(bells_text, reply_markup=self.bells_result_keyboard(), parse_mode=ParseMode.MARKDOWN)
 
         @self.router.message(F.text == f"{BELL_ICON} Інша зміна")
         async def other_bells(message: Message):
             await safe_send(
                 message,
-                f"{BELL_ICON} Розклад дзвінків\n\nОберіть зміну:",
-                self.bells_keyboard()
+                f"{BELL_ICON} *Розклад дзвінків*\n\nОберіть зміну:",
+                self.bells_keyboard(),
+                parse_mode=ParseMode.MARKDOWN
             )
+
+        # ========== AI ПОМІЧНИК ==========
 
         @self.router.message(F.text.contains(f"{AI_ICON} AI Помічник"))
         async def ai_assistant(message: Message):
@@ -603,6 +624,8 @@ class TelegramBot:
             st = self.state(user_id)
             st["detail_next"] = False
             await safe_send(message, "🧹 Контекст очищено", self.ai_keyboard(user_id))
+
+        # ========== РОЗКЛАД ==========
 
         @self.router.message(F.text.contains(f"{SCHEDULE_ICON} Розклад"))
         async def schedule_start(message: Message):
@@ -709,9 +732,11 @@ class TelegramBot:
             
             if len(schedule_text) > 4000:
                 for chunk in split_chunks(schedule_text, 4000):
-                    await safe_send(message, chunk, self.schedule_result_keyboard(user_id) if chunk == schedule_text else None)
+                    await safe_send(message, chunk, self.schedule_result_keyboard(user_id))
             else:
                 await safe_send(message, schedule_text, self.schedule_result_keyboard(user_id))
+
+        # ========== АДМІН КОМАНДИ ==========
 
         @self.router.message(F.text == "📊 Статистика")
         async def admin_stats(message: Message):
@@ -831,6 +856,8 @@ class TelegramBot:
                     failed += 1
             
             await safe_send(message, f"✅ Розсилка завершена!\n\nВідправлено: {sent}\nПомилок: {failed}", self.admin_keyboard())
+
+        # ========== КЕРУВАННЯ РЕЖИМАМИ AI ==========
 
         @self.router.message(F.text == "🤖 Керування режимами AI")
         async def ai_management(message: Message):
@@ -980,6 +1007,8 @@ class TelegramBot:
         async def cancel_callback(callback: CallbackQuery):
             await callback.message.delete()
             await callback.answer()
+
+        # ========== ОСНОВНИЙ ЧАТ ==========
 
         @self.router.message()
         async def ai_chat(message: Message):

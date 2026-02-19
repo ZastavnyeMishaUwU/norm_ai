@@ -1,5 +1,7 @@
 import asyncio
+import re
 from aiogram.types import Message
+from aiogram.enums import ParseMode
 from config import LOADING_FRAMES, LOADING_ICON
 
 async def loading_animation(message: Message, text="Завантаження"):
@@ -25,12 +27,17 @@ def split_chunks(text: str, size: int = 3900):
     for i in range(0, len(text), size):
         yield text[i:i + size]
 
-async def safe_send(message: Message, text: str, reply_markup=None):
-
+async def safe_send(message: Message, text: str, reply_markup=None, parse_mode=None):
+    """Безпечна відправка з підтримкою маркдауну"""
     try:
-        await message.answer(text, reply_markup=reply_markup)
+        if parse_mode:
+            await message.answer(text, reply_markup=reply_markup, parse_mode=parse_mode)
+        else:
+            await message.answer(text, reply_markup=reply_markup)
     except Exception as e:
         try:
-            await message.answer(text[:4000], reply_markup=reply_markup)
+            # Якщо маркдаун падає - відправляємо без нього
+            plain_text = re.sub(r'[*_`\\[\\]()~>#+=|{}.!-]', '', text)
+            await message.answer(plain_text[:4000], reply_markup=reply_markup)
         except:
             await message.answer("❌ Помилка відправки", reply_markup=reply_markup)

@@ -9,8 +9,9 @@ ADMINS_FILE = 'admins.json'
 SCHEDULE_FILE = 'schedule_full.json'
 BELLS_FILE = 'bells_schedule.json'
 INSTRUCTIONS_FILE = 'instructions.json'
+ELEMENTARY_SCHEDULE_FILE = 'elementary_schedule.json'
 
-# Прості символи, без маркдауну
+# Прості символи
 CLASS_ICON = "● "
 DAY_ICON = "▶ "
 BACK_ICON = "◀ "
