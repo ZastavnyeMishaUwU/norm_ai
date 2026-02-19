@@ -208,7 +208,10 @@ class TelegramBot:
         keyboard = []
         row = []
         
-        for i, class_name in enumerate(sorted(classes), 1):
+        # Правильне сортування класів
+        sorted_classes = sorted(classes, key=lambda x: (int(x.split('-')[0]), x))
+        
+        for i, class_name in enumerate(sorted_classes, 1):
             row.append(KeyboardButton(text=f"{CLASS_ICON}{class_name}"))
             if i % 4 == 0:
                 keyboard.append(row)
@@ -1037,6 +1040,7 @@ class TelegramBot:
         print(f"👑 Адмінів: {len(self.admins_data.get('admins', []))}")
         print(f"💰 Донатерів: {len(self.donors)}")
         print(f"🤖 Режимів: {len(self.client.get_available_modes())}")
+        print(f"📚 Класів: {len(ALL_CLASSES)}")
         
         await self.drop_pending_updates()
         await self.dp.start_polling(self.bot, drop_pending_updates=True)
