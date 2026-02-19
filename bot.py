@@ -54,6 +54,7 @@ class TelegramBot:
                 "selected_day": None,
                 "is_admin": is_admin,
                 "is_donor": is_donor,
+                "donate_hidden": is_donor,
                 "awaiting_password": False,
                 "awaiting_broadcast": False,
                 "awaiting_new_password": False,
@@ -150,9 +151,11 @@ class TelegramBot:
         schedule = self.get_schedule_for_class_day(class_name, day_key)
         return schedule.replace(f"{day_name}", f"ЗАВТРА ({day_name})")
 
+    # ========== ВСІ КЛАВІАТУРИ ==========
+
     def main_keyboard(self, user_id=None):
         st = self.state(user_id) if user_id else None
-        show_donate = st and not st.get("is_donor", False)
+        show_donate = st and not st.get("is_donor", False) and not st.get("donate_hidden", False)
         
         keyboard = [
             [KeyboardButton(text=f"{AI_ICON} AI Помічник"), 
@@ -184,7 +187,7 @@ class TelegramBot:
 
     def schedule_main_keyboard(self, user_id=None):
         st = self.state(user_id) if user_id else None
-        show_donate = st and not st.get("is_donor", False)
+        show_donate = st and not st.get("is_donor", False) and not st.get("donate_hidden", False)
         
         keyboard = [
             [KeyboardButton(text=f"{CLASS_ICON} Вибрати клас")],
@@ -203,7 +206,7 @@ class TelegramBot:
     def classes_keyboard(self, user_id=None):
         classes = ALL_CLASSES
         st = self.state(user_id) if user_id else None
-        show_donate = st and not st.get("is_donor", False)
+        show_donate = st and not st.get("is_donor", False) and not st.get("donate_hidden", False)
         
         keyboard = []
         row = []
@@ -227,7 +230,7 @@ class TelegramBot:
 
     def days_keyboard(self, class_name, user_id=None):
         st = self.state(user_id) if user_id else None
-        show_donate = st and not st.get("is_donor", False)
+        show_donate = st and not st.get("is_donor", False) and not st.get("donate_hidden", False)
         
         keyboard = [
             [KeyboardButton(text=f"{DAY_ICON} Понеділок"), 
@@ -247,7 +250,7 @@ class TelegramBot:
 
     def schedule_result_keyboard(self, user_id=None):
         st = self.state(user_id) if user_id else None
-        show_donate = st and not st.get("is_donor", False)
+        show_donate = st and not st.get("is_donor", False) and not st.get("donate_hidden", False)
         
         keyboard = [
             [KeyboardButton(text="📆 Сьогодні"), 
@@ -324,6 +327,8 @@ class TelegramBot:
                 [InlineKeyboardButton(text="✅ Я задонатив", callback_data="donate_done")]
             ]
         )
+
+    # ========== ВСІ ХЕНДЛЕРИ ==========
 
     def setup_handlers(self):
         
@@ -497,16 +502,20 @@ class TelegramBot:
             st = self.state(user_id)
             
             st["is_donor"] = True
+            st["donate_hidden"] = True
             self.donors.add(user_id)
             self.stats.donors.add(user_id)
             
             await callback.message.edit_text(f"{DONATE_ICON} Дякуємо! Адмін перевірить платіж.")
             await callback.answer()
 
+        # ========== ДЗВІНКИ ==========
+
         @self.router.message(F.text.contains(f"{BELL_ICON} Дзвінки"))
         async def bells_menu(message: Message):
             user_id = message.from_user.id
             st = self.state(user_id)
+            print(f"🔔 Натиснуто Дзвінки користувачем {user_id}")
             
             await safe_send(
                 message,
@@ -571,6 +580,8 @@ class TelegramBot:
                 parse_mode=ParseMode.MARKDOWN
             )
 
+        # ========== AI ПОМІЧНИК ==========
+
         @self.router.message(F.text.contains(f"{AI_ICON} AI Помічник"))
         async def ai_assistant(message: Message):
             user_id = message.from_user.id
@@ -604,6 +615,8 @@ class TelegramBot:
             st = self.state(user_id)
             st["detail_next"] = False
             await safe_send(message, "🧹 Контекст очищено", self.ai_keyboard(user_id))
+
+        # ========== РОЗКЛАД ==========
 
         @self.router.message(F.text.contains(f"{SCHEDULE_ICON} Розклад"))
         async def schedule_start(message: Message):
@@ -710,6 +723,8 @@ class TelegramBot:
                     await safe_send(message, chunk, self.schedule_result_keyboard(user_id))
             else:
                 await safe_send(message, schedule_text, self.schedule_result_keyboard(user_id))
+
+        # ========== АДМІН КОМАНДИ ==========
 
         @self.router.message(F.text == "📊 Статистика")
         async def admin_stats(message: Message):
@@ -980,6 +995,8 @@ class TelegramBot:
         async def cancel_callback(callback: CallbackQuery):
             await callback.message.delete()
             await callback.answer()
+
+        # ========== ОСНОВНИЙ ЧАТ ==========
 
         @self.router.message()
         async def ai_chat(message: Message):
